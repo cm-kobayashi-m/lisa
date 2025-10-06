@@ -1,0 +1,11 @@
+google-auth-oauthlib
+google-api-python-client
+google-genai
+PyPDF2
+python-docx
+openpyxl
+python-pptx
+python-dotenv
+tenacity
+pyyaml
+reportlab  # Office形式→PDF変換用（オプション）
