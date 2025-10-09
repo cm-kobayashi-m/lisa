@@ -9,11 +9,9 @@ __version__ = "0.1.0"
 
 from .vector_store import S3VectorStore, Document
 from .embeddings import GeminiEmbeddings
-from .retriever import RAGRetriever
 
 __all__ = [
     "S3VectorStore",
     "Document",
     "GeminiEmbeddings",
-    "RAGRetriever",
 ]

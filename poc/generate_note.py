@@ -502,39 +502,25 @@ def analyze_file_with_gemini(client: genai.Client, file_path: Optional[Path], fi
             file_size_mb = file_path.stat().st_size / (1024 * 1024)
             print(f"    ファイルサイズ: {file_size_mb:.2f} MB")
 
-            # Files APIを使用してアップロード
-            if file_size_mb > 20:
-                print(f"    Files APIでアップロード中...")
-                uploaded_file = client.files.upload(
-                    path=str(file_path),
-                    config={"mime_type": mime_type}
-                )
-                print(f"    アップロード完了: {uploaded_file.uri}")
+            # インラインで送信
+            print(f"    インラインでファイルを送信中...")
+            with open(file_path, 'rb') as f:
+                file_data = f.read()
 
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=[base_prompt, uploaded_file]
-                )
-            else:
-                # インラインで送信
-                print(f"    インラインでファイルを送信中...")
-                with open(file_path, 'rb') as f:
-                    file_data = f.read()
-
-                contents = [
-                    base_prompt,
-                    {
-                        "inline_data": {
-                            "data": file_data,
-                            "mime_type": mime_type
-                        }
+            contents = [
+                base_prompt,
+                {
+                    "inline_data": {
+                        "data": file_data,
+                        "mime_type": mime_type
                     }
-                ]
+                }
+            ]
 
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=contents
-                )
+            response = client.models.generate_content(
+                model=model_name,
+                contents=contents
+            )
 
         # テキストコンテンツの場合
         elif text_content:

@@ -27,8 +27,6 @@ import gc
 import traceback
 import json
 import datetime
-import asyncio
-import time
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from dotenv import load_dotenv
@@ -76,11 +74,6 @@ OFFICE_TO_GOOGLE_MIME = {
 VECTOR_BUCKET_NAME = os.getenv('VECTOR_BUCKET_NAME', 'lisa-poc-vectors')
 VECTOR_INDEX_NAME = os.getenv('VECTOR_INDEX_NAME', 'project-documents')
 AWS_REGION = os.getenv('AWS_REGION', 'us-west-2')
-
-# 並列処理設定
-MAX_CONCURRENT_REQUESTS = int(os.getenv('MAX_CONCURRENT_REQUESTS', '20'))  # 同時実行数
-API_TIMEOUT_SECONDS = int(os.getenv('API_TIMEOUT_SECONDS', '300'))  # APIタイムアウト（秒）
-REQUEST_DELAY_SECONDS = float(os.getenv('REQUEST_DELAY_SECONDS', '0.1'))  # リクエスト間の待機時間
 
 # 環境変数読み込み
 load_dotenv()
@@ -284,114 +277,51 @@ def convert_office_via_google_drive(service, file_content: bytes, file_name: str
 
 
 class MultimodalChunker:
-    """Geminiマルチモーダルによるチャンク化処理（並列処理対応）"""
+    """Geminiマルチモーダルによるチャンク化処理"""
 
     def __init__(self, gemini_client: genai.Client, embeddings: GeminiEmbeddings):
         self.client = gemini_client
         self.embeddings = embeddings
         self.model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
-        # 並列処理用のセマフォ（同時実行数を制限）
-        self.semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
-    async def chunk_file_with_gemini_async(self, service, file_info: Dict, project_name: str, index: int, total: int) -> Tuple[str, List[Dict]]:
+    def chunk_file_with_gemini(self, service, file_info: Dict, project_name: str) -> List[Dict]:
         """
-        Geminiマルチモーダルでファイルを読み込み、チャンク化する（非同期版）
+        Geminiマルチモーダルでファイルを読み込み、チャンク化する
 
         Returns:
-            (file_name, チャンク情報のリスト)
+            チャンク情報のリスト（text, metadata）
         """
         file_id = file_info['id']
         file_name = file_info['name']
         mime_type = file_info['mimeType']
 
-        # セマフォで同時実行数を制限
-        async with self.semaphore:
-            print(f"  [{index}/{total}] 処理開始: {file_name}")
+        print(f"  処理中: {file_name}")
 
-            # ファイルサイズチェック
-            file_size = int(file_info.get('size', 0))
-            if file_size > 20 * 1024 * 1024:
-                print(f"    [SKIP] ファイルサイズが大きすぎます: {file_size / 1024 / 1024:.1f}MB")
-                return file_name, []
+        # ファイルサイズチェック
+        file_size = int(file_info.get('size', 0))
+        if file_size > 20 * 1024 * 1024:
+            print(f"    [SKIP] ファイルサイズが大きすぎます: {file_size / 1024 / 1024:.1f}MB")
+            return []
 
-            try:
-                # ダウンロード処理は同期処理なのでrun_in_executorで実行
-                loop = asyncio.get_event_loop()
-                download_result = await loop.run_in_executor(
-                    None,
-                    self._download_file,
-                    service, file_id, file_name, mime_type
-                )
+        try:
+            # ファイルをダウンロードまたはエクスポート（MS OfficeはPDF変換）
+            download_result = self._download_file(service, file_id, file_name, mime_type)
 
-                if not download_result:
-                    print(f"    [SKIP] ファイルを読み込めませんでした")
-                    return file_name, []
+            if not download_result:
+                print(f"    [SKIP] ファイルを読み込めませんでした")
+                return []
 
-                file_content, actual_mime_type = download_result
+            file_content, actual_mime_type = download_result
 
-                # Geminiでチャンク化を実行（タイムアウト付き）
-                try:
-                    chunks = await asyncio.wait_for(
-                        loop.run_in_executor(
-                            None,
-                            self._request_chunking,
-                            file_content, file_name, actual_mime_type, project_name
-                        ),
-                        timeout=API_TIMEOUT_SECONDS
-                    )
-                    print(f"    ✓ 完了: {len(chunks)}個のチャンクを生成")
-                    return file_name, chunks
+            # Geminiでチャンク化を実行（実際のMIMEタイプを使用）
+            chunks = self._request_chunking(file_content, file_name, actual_mime_type, project_name)
 
-                except asyncio.TimeoutError:
-                    print(f"    [ERROR] タイムアウト ({API_TIMEOUT_SECONDS}秒)")
-                    return file_name, []
+            print(f"    {len(chunks)}個のチャンクを生成")
+            return chunks
 
-            except Exception as e:
-                print(f"    [ERROR] 処理エラー: {e}")
-                return file_name, []
-            finally:
-                # リクエスト間に小さな遅延を入れる
-                await asyncio.sleep(REQUEST_DELAY_SECONDS)
-
-    def chunk_file_with_gemini(self, service, file_info: Dict, project_name: str) -> List[Dict]:
-        """
-        Geminiマルチモーダルでファイルを読み込み、チャンク化する（同期版ラッパー）
-
-        Returns:
-            チャンク情報のリスト（text, metadata）
-        """
-        # 非同期版を同期的に実行
-        _, chunks = asyncio.run(self.chunk_file_with_gemini_async(service, file_info, project_name, 1, 1))
-        return chunks
-
-    async def chunk_files_parallel(self, service, files: List[Dict], project_name: str) -> Dict[str, List[Dict]]:
-        """
-        複数のファイルを並列でチャンク化する
-
-        Returns:
-            {file_name: chunks} の辞書
-        """
-        print(f"\n[INFO] {len(files)}個のファイルを並列処理します（最大{MAX_CONCURRENT_REQUESTS}件同時実行）")
-
-        # すべてのファイルを非同期タスクとして作成
-        tasks = [
-            self.chunk_file_with_gemini_async(service, file_info, project_name, i + 1, len(files))
-            for i, file_info in enumerate(files)
-        ]
-
-        # すべてのタスクを並列実行
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # 結果を辞書に変換
-        chunks_dict = {}
-        for result in results:
-            if isinstance(result, Exception):
-                print(f"    [ERROR] タスク実行エラー: {result}")
-                continue
-            file_name, chunks = result
-            chunks_dict[file_name] = chunks
-
-        return chunks_dict
+        except Exception as e:
+            print(f"    [ERROR] 処理エラー: {e}")
+            return []
 
     def _download_file(self, service, file_id: str, file_name: str, mime_type: str) -> Optional[Tuple[bytes, str]]:
         """ファイルをダウンロード（MS Officeファイルは自動的にPDF変換）"""
@@ -482,44 +412,26 @@ class MultimodalChunker:
 
         try:
             # ファイルサイズによって送信方法を決定
-            if len(file_content) > 10 * 1024 * 1024:  # 10MB以上
-                # Files APIを使用
-                print("    Gemini Files APIでアップロード中...")
-                temp_path = Path(TEMP_DIR) / file_name
-                temp_path.parent.mkdir(exist_ok=True)
-                with open(temp_path, 'wb') as f:
-                    f.write(file_content)
+            print(
+                f"    ファイルタイプ: {mime_type}, ファイルサイズ: {len(file_content) / 1024 / 1024:.1f}MB"
+            )
 
-                uploaded_file = self.client.files.upload(
-                    path=str(temp_path),
-                    config={"mime_type": mime_type}
-                )
-
-                response = self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=[chunk_prompt, uploaded_file]
-                )
-
-                # 一時ファイル削除
-                temp_path.unlink(missing_ok=True)
-
-            else:
-                # インラインで送信
-                print("    Geminiにインラインで送信中...")
-                contents = [
-                    chunk_prompt,
-                    {
-                        "inline_data": {
-                            "data": file_content,
-                            "mime_type": mime_type
-                        }
+            # インラインで送信
+            print("    Geminiにインラインで送信中...")
+            contents = [
+                chunk_prompt,
+                {
+                    "inline_data": {
+                        "data": file_content,
+                        "mime_type": mime_type
                     }
-                ]
+                }
+            ]
 
-                response = self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=contents
-                )
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=contents
+            )
 
             # レスポンスからJSONを抽出
             response_text = response.text
