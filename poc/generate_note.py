@@ -487,15 +487,67 @@ def initialize_gemini_client() -> genai.Client:
     )
 )
 def analyze_file_with_gemini(client: genai.Client, file_path: Optional[Path], file_name: str,
-                            mime_type: Optional[str], text_content: Optional[str] = None) -> str:
-    """Gemini Files APIまたはテキストモードでファイルを分析"""
+                            mime_type: Optional[str], text_content: Optional[str] = None,
+                            use_rag: bool = True, project_name: Optional[str] = None) -> str:
+    """Gemini Files APIまたはテキストモードでファイルを分析（RAG拡張版）"""
     # 改善版のプロンプトを使用
     from improved_prompts import get_analyze_file_prompt
     model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
 
+    # RAGコンテキストの取得
+    rag_context = ""
+    if use_rag and os.getenv('USE_RAG', 'true').lower() == 'true':
+        try:
+            print(f"[INFO] RAG検索を実行中...")
+            # RAGRetrieverの初期化
+            from rag.rag_retriever import RAGRetriever
+            from rag.vector_store import S3VectorStore
+            from rag.embeddings import GeminiEmbeddings
+
+            # 初期化
+            embeddings = GeminiEmbeddings(api_key=os.getenv('GEMINI_API_KEY'))
+            vector_store = S3VectorStore(
+                vector_bucket_name=os.getenv('VECTOR_BUCKET_NAME', 'lisa-poc-vectors'),
+                index_name=os.getenv('VECTOR_INDEX_NAME', 'project-documents'),
+                dimension=768,
+                region_name=os.getenv('AWS_REGION', 'us-west-2'),
+                create_if_not_exists=False  # 既存のインデックスを使用
+            )
+            retriever = RAGRetriever(vector_store, embeddings)
+
+            # ファイル名とプロジェクト名から検索クエリを生成
+            search_query = f"{file_name}"
+            if project_name:
+                search_query = f"{project_name} {file_name}"
+
+            # テキストコンテンツがある場合は、その一部も検索クエリに含める
+            if text_content and len(text_content) > 100:
+                search_query += f" {text_content[:500]}"
+
+            # 類似ドキュメント検索
+            results = retriever.search_similar_documents(
+                query=search_query,
+                project_name=project_name,
+                k=5
+            )
+
+            if results:
+                rag_context = retriever.format_context_for_prompt(results, max_chars=3000)
+                print(f"[INFO] RAGから{len(results)}件の関連情報を取得")
+            else:
+                print(f"[INFO] RAG検索結果なし")
+
+        except Exception as e:
+            print(f"[WARN] RAG検索でエラーが発生しました: {e}")
+            # RAGが失敗しても処理は継続
+
     try:
         # プロンプト
         base_prompt = get_analyze_file_prompt(file_name)
+
+        # RAGコンテキストをプロンプトに追加
+        if rag_context:
+            base_prompt = f"{base_prompt}\n\n{rag_context}"
 
         # ファイルパスがある場合（PDF/画像）
         if file_path and file_path.exists():
@@ -558,8 +610,56 @@ def analyze_file_with_gemini(client: genai.Client, file_path: Optional[Path], fi
         f" - {retry_state.next_action.sleep}秒待機してリトライします..."
     )
 )
-def generate_final_reflection_note(client: genai.Client, project_name: str, file_summaries: List[Dict[str, str]]) -> tuple[str, str]:
-    """全ファイル分析結果から最終的なリフレクションノートを生成"""
+def generate_final_reflection_note(client: genai.Client, project_name: str, file_summaries: List[Dict[str, str]],
+                                  use_rag: bool = True) -> tuple[str, str]:
+    """全ファイル分析結果から最終的なリフレクションノートを生成（RAG拡張版）"""
+
+    # RAGから過去の類似プロジェクト情報を取得
+    rag_context = ""
+    if use_rag and os.getenv('USE_RAG', 'true').lower() == 'true':
+        try:
+            print(f"[INFO] 類似プロジェクト情報をRAGから検索中...")
+            from rag.rag_retriever import RAGRetriever
+            from rag.vector_store import S3VectorStore
+            from rag.embeddings import GeminiEmbeddings
+
+            # 初期化
+            embeddings = GeminiEmbeddings(api_key=os.getenv('GEMINI_API_KEY'))
+            vector_store = S3VectorStore(
+                vector_bucket_name=os.getenv('VECTOR_BUCKET_NAME', 'lisa-poc-vectors'),
+                index_name=os.getenv('VECTOR_INDEX_NAME', 'project-documents'),
+                dimension=768,
+                region_name=os.getenv('AWS_REGION', 'us-west-2'),
+                create_if_not_exists=False
+            )
+            retriever = RAGRetriever(vector_store, embeddings)
+
+            # プロジェクト全体のサマリからキーワードを抽出
+            all_text = ""
+            for i, summary in enumerate(file_summaries[:3]):  # 最初の3ファイルから
+                all_text += f"{summary.get('file_name', '')} {summary.get('analysis', '')}[:500] "
+                if len(all_text) > 1000:
+                    break
+
+            # 類似プロジェクト情報を検索（現在のプロジェクト以外から）
+            results = retriever.get_cross_project_insights(
+                query=all_text[:1000],
+                exclude_project=project_name,
+                k=8
+            )
+
+            if results:
+                rag_context = "\n\n## 過去の類似プロジェクト情報（RAG）\n\n"
+                rag_context += "以下は、過去の類似プロジェクトから抽出された知見です。パターン認識や リスク予測に活用してください。\n\n"
+                rag_context += retriever.format_context_for_prompt(results, max_chars=8000)
+                print(f"[INFO] RAGから{len(results)}件の類似プロジェクト情報を取得")
+            else:
+                print(f"[INFO] 類似プロジェクトが見つかりませんでした")
+
+        except Exception as e:
+            print(f"[WARN] RAG検索でエラーが発生しました: {e}")
+            # RAGが失敗しても処理は継続
+
     # 改善版のプロンプトを使用
     from improved_prompts import get_final_reflection_prompt
 
@@ -576,6 +676,10 @@ def generate_final_reflection_note(client: genai.Client, project_name: str, file
         f"=== {summary['file_name']} の分析結果 ===\n{summary['analysis']}"
         for summary in file_summaries
     ])
+
+    # RAGコンテキストを統合
+    if rag_context:
+        summaries_text = summaries_text + "\n\n" + rag_context
 
     # 改善版プロンプトを生成
     prompt = get_final_reflection_prompt(
@@ -676,7 +780,9 @@ def process_project(service, client: genai.Client, project: Dict[str, str]) -> b
                             file_path,
                             file['name'],
                             converted_mime,
-                            None
+                            None,
+                            use_rag=True,
+                            project_name=project_name
                         )
                         file_summaries.append({
                             'file_name': file['name'],
@@ -696,7 +802,9 @@ def process_project(service, client: genai.Client, project: Dict[str, str]) -> b
                                     None,
                                     file['name'],
                                     None,
-                                    text
+                                    text,
+                                    use_rag=True,
+                                    project_name=project_name
                                 )
                                 file_summaries.append({
                                     'file_name': file['name'],
@@ -717,7 +825,9 @@ def process_project(service, client: genai.Client, project: Dict[str, str]) -> b
                                 None,
                                 file['name'],
                                 None,
-                                text
+                                text,
+                                use_rag=True,
+                                project_name=project_name
                             )
                             file_summaries.append({
                                 'file_name': file['name'],
@@ -743,7 +853,9 @@ def process_project(service, client: genai.Client, project: Dict[str, str]) -> b
                         None,
                         file['name'],
                         None,
-                        text
+                        text,
+                        use_rag=True,
+                        project_name=project_name
                     )
                     file_summaries.append({
                         'file_name': file['name'],
