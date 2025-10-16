@@ -53,6 +53,7 @@ SCOPES = ['https://www.googleapis.com/auth/drive']  # PDF変換にはfullスコ�
 TOKEN_FILE = 'token.yaml'
 CREDENTIALS_FILE = 'credentials.json'
 TEMP_DIR = 'temp_files'
+MAX_FILE_SIZE = 3
 
 # MS Office to Google Workspace MIMEタイプマッピング
 OFFICE_TO_GOOGLE_MIME = {
@@ -299,7 +300,7 @@ class MultimodalChunker:
 
         # ファイルサイズチェック
         file_size = int(file_info.get('size', 0))
-        if file_size > 20 * 1024 * 1024:
+        if file_size > MAX_FILE_SIZE * 1024 * 1024:
             print(f"    [SKIP] ファイルサイズが大きすぎます: {file_size / 1024 / 1024:.1f}MB")
             return []
 

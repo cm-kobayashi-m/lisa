@@ -8,4 +8,6 @@ python-pptx
 python-dotenv
 tenacity
 pyyaml
+langchain
+langchain-google-genai
 reportlab  # Office形式→PDF変換用（オプション）
