@@ -40,6 +40,7 @@ from tenacity import (
 )
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
+import spacy
 
 # Google Drive API
 from google.auth.transport.requests import Request
@@ -77,6 +78,8 @@ CREDENTIALS_FILE = "credentials.json"
 TEMP_DIR = "temp_files"
 MAX_FILE_SIZE = 30  # MB（PDF/Officeファイル用に増加）
 MAX_WORKERS = 20  # 並列処理のワーカー数（ローカル処理なので増やせる）
+EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', "gemini-embedding-001")
+DIMENSION = int(os.getenv('DIMENSION', 1536))
 
 # MS Office MIMEタイプ定義
 OFFICE_WORD_MIMES = [
@@ -533,6 +536,10 @@ class UnstructuredChunker:
     ) -> List[Dict]:
         """Elementsを構造的にチャンク化"""
         try:
+            # GiNZAモデルの読み込み
+            # 初回実行時はモデルのダウンロードに時間がかかる場合があります
+            nlp = spacy.load("ja_ginza")
+
             print(f"    [処理] {len(elements)}個のElementsをチャンク化中...")
 
             # chunk_by_titleで論理単位にグループ化
@@ -565,17 +572,27 @@ class UnstructuredChunker:
 
                 # チャンク作成
                 for sub_idx, sub_text in enumerate(sub_texts):
-                    # カテゴリを収集
+                    # カテゴリを取得
+                    # TODO: カテゴリはどのタイプのドキュメントなのかをつける（提案書、設計書 etc）
                     categories = set()
+                    if hasattr(tc, "category"):
+                        categories.add(tc.category)
+
+                    # ページを取得
                     pages = set()
-                    if hasattr(tc, "elements"):
-                        for elem in tc.elements:
-                            if hasattr(elem, "category") and elem.category:
-                                categories.add(elem.category)
-                            if hasattr(elem, "metadata") and hasattr(
-                                elem.metadata, "page_number"
-                            ):
-                                pages.add(elem.metadata.page_number)
+                    if hasattr(tc, "metadata") and hasattr(tc.metadata, "page_number"):
+                        pages.add(tc.metadata.page_number)
+
+                    # テキストからタグを取得
+                    doc = nlp(sub_text)
+                    # タグ候補を格納するset
+                    tags = set()
+                    # 解析結果の各単語（トークン）をチェック
+                    for token in doc:
+                        # 品詞が「名詞」または「固有名詞」であればタグ候補に追加
+                        # "PROPN"は固有名詞, "NOUN"は普通名詞を指します
+                        if token.pos_ in ["PROPN", "NOUN"]:
+                            tags.add(token.lemma_)
 
                     # タイトルを取得
                     title = ""
@@ -595,6 +612,7 @@ class UnstructuredChunker:
                                 if title
                                 else f"Section {idx + 1}",
                                 "categories": list(categories) if categories else [],
+                                "tags": list(tags) if tags else [],
                                 "pages": sorted(list(pages)) if pages else [],
                                 "importance": "medium",
                             },
@@ -661,13 +679,13 @@ class VectorDBBuilder:
         if not api_key:
             raise ValueError("GEMINI_API_KEY が設定されていません")
 
-        self.embeddings = GeminiEmbeddings(api_key=api_key)
+        self.embeddings = GeminiEmbeddings(api_key=api_key,model_name=EMBEDDING_MODEL,dimension=DIMENSION)
 
         # Vector Store初期化
         self.vector_store = S3VectorStore(
             vector_bucket_name=VECTOR_BUCKET_NAME,
             index_name=VECTOR_INDEX_NAME,
-            dimension=768,
+            dimension=DIMENSION,
             distance_metric="cosine",
             region_name=AWS_REGION,
             create_if_not_exists=True,

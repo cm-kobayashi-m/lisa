@@ -3,12 +3,12 @@ RAG検索を行うヘルパークラス
 
 S3 Vectorsから類似ドキュメントを検索し、プロンプトに統合するための機能を提供します。
 """
+
 import os
 import logging
 import math
 from datetime import datetime, timezone
-from typing import List, Dict, Optional, Any, Tuple
-from dataclasses import dataclass
+from typing import List, Optional, Tuple
 
 from .vector_store import S3VectorStore, Document
 from .embeddings import GeminiEmbeddings
@@ -32,11 +32,7 @@ class RAGRetriever:
         self.embeddings = embeddings
 
     def search_similar_documents(
-        self,
-        query: str,
-        project_name: Optional[str] = None,
-        file_name: Optional[str] = None,
-        k: int = 5
+        self, query: str, project_name: Optional[str] = None, k: int = 5
     ) -> List[Tuple[Document, float]]:
         """
         類似ドキュメントを検索
@@ -57,21 +53,14 @@ class RAGRetriever:
 
             # フィルタ条件の構築
             filter_dict = None
-            if project_name or file_name:
-                filter_dict = {}
-                if project_name:
-                    filter_dict["project_name"] = {"$eq": project_name}
-                    logger.info(f"プロジェクト名でフィルタ: {project_name}")
-                if file_name:
-                    filter_dict["file_name"] = {"$eq": file_name}
-                    logger.info(f"ファイル名でフィルタ: {file_name}")
+            if project_name:
+                filter_dict = {"project_name": {"$eq": project_name}}
+                logger.info(f"プロジェクト名でフィルタ: {project_name}")
 
             # 類似度検索
             logger.info(f"S3 Vectorsで類似度検索を実行（k={k}）")
             results = self.vector_store.similarity_search(
-                query_vector=query_vector,
-                k=k,
-                filter_dict=filter_dict
+                query_vector=query_vector, k=k, filter_dict=filter_dict
             )
 
             logger.info(f"検索完了: {len(results)}件の結果を取得")
@@ -86,7 +75,7 @@ class RAGRetriever:
         self,
         results: List[Tuple[Document, float]],
         max_chars: int = 5000,
-        include_metadata: bool = True
+        include_metadata: bool = True,
     ) -> str:
         """
         検索結果をプロンプト用にフォーマット
@@ -103,19 +92,21 @@ class RAGRetriever:
             return ""
 
         context = "## 関連情報（RAG検索結果）\n\n"
-        context += f"以下は過去の類似プロジェクトや関連ドキュメントから抽出された情報です。\n"
-        context += f"これらの情報を参考にして、より深い分析を行ってください。\n\n"
+        context += (
+            "以下は過去の類似プロジェクトや関連ドキュメントから抽出された情報です。\n"
+        )
+        context += "これらの情報を参考にして、より深い分析を行ってください。\n\n"
 
         total_chars = len(context)
 
         for i, (doc, score) in enumerate(results, 1):
             # S3 Vectorsの距離を類似度に変換
             # S3 Vectorsは類似度ではなく距離を返すため、メトリックに応じて正規化
-            distance_metric = os.getenv('VECTOR_DISTANCE_METRIC', 'cosine')
-            if distance_metric == 'cosine':
+            distance_metric = os.getenv("VECTOR_DISTANCE_METRIC", "cosine")
+            if distance_metric == "cosine":
                 # cosine距離は 1 - cosine_similarity
                 similarity = max(0.0, min(1.0, 1.0 - score))
-            elif distance_metric == 'euclidean':
+            elif distance_metric == "euclidean":
                 # euclidean距離を類似度に変換
                 similarity = 1.0 / (1.0 + score)
             else:
@@ -129,17 +120,19 @@ class RAGRetriever:
 
             if include_metadata:
                 # メタデータを含める
-                doc_text += f"- **プロジェクト**: {doc.metadata.get('project_name', '不明')}\n"
+                doc_text += (
+                    f"- **プロジェクト**: {doc.metadata.get('project_name', '不明')}\n"
+                )
                 doc_text += f"- **ファイル**: {doc.metadata.get('file_name', '不明')}\n"
 
                 # その他のメタデータ（あれば）
-                if 'chunk_index' in doc.metadata:
+                if "chunk_index" in doc.metadata:
                     doc_text += f"- **チャンク番号**: {doc.metadata['chunk_index']}\n"
-                if 'title' in doc.metadata:
+                if "title" in doc.metadata:
                     doc_text += f"- **タイトル**: {doc.metadata['title']}\n"
-                if 'topics' in doc.metadata and doc.metadata['topics']:
+                if "topics" in doc.metadata and doc.metadata["topics"]:
                     doc_text += f"- **トピック**: {', '.join(doc.metadata['topics'])}\n"
-                if 'importance' in doc.metadata:
+                if "importance" in doc.metadata:
                     doc_text += f"- **重要度**: {doc.metadata['importance']}\n"
 
             # ドキュメントの内容（文字数制限を考慮）
@@ -152,7 +145,7 @@ class RAGRetriever:
                 doc_text += f"\n**内容**:\n```\n{truncated_text}\n```\n\n"
             else:
                 # 文字数制限に達した場合
-                context += f"\n（以降、文字数制限により省略）\n"
+                context += "\n（以降、文字数制限により省略）\n"
                 break
 
             # 文字数チェック
@@ -166,10 +159,7 @@ class RAGRetriever:
         return context
 
     def search_by_project(
-        self,
-        project_name: str,
-        query: Optional[str] = None,
-        k: int = 10
+        self, project_name: str, query: Optional[str] = None, k: int = 10
     ) -> List[Tuple[Document, float]]:
         """
         プロジェクト名で検索（クエリはオプション）
@@ -185,9 +175,7 @@ class RAGRetriever:
         if query:
             # クエリがある場合は類似度検索
             return self.search_similar_documents(
-                query=query,
-                project_name=project_name,
-                k=k
+                query=query, project_name=project_name, k=k
             )
         else:
             # クエリがない場合はプロジェクト名でフィルタのみ
@@ -195,16 +183,11 @@ class RAGRetriever:
             logger.info(f"プロジェクト '{project_name}' の全ドキュメントを取得")
             # プロジェクト名自体をクエリとして使用
             return self.search_similar_documents(
-                query=project_name,
-                project_name=project_name,
-                k=k
+                query=project_name, project_name=project_name, k=k
             )
 
     def get_cross_project_insights(
-        self,
-        query: str,
-        exclude_project: Optional[str] = None,
-        k: int = 5
+        self, query: str, exclude_project: Optional[str] = None, k: int = 5
     ) -> List[Tuple[Document, float]]:
         """
         他プロジェクトからの知見を取得
@@ -221,19 +204,23 @@ class RAGRetriever:
             # クエリをベクトル化
             query_vector = self.embeddings.embed_query(query)
 
+            # フィルタ条件の構築
+            filter_dict = None
+            if exclude_project:
+                filter_dict = {"project_name": {"$ne": exclude_project}}
+                logger.info(f"プロジェクト名でフィルタ: {exclude_project}")
+
             # 除外プロジェクトがある場合のフィルタ
-            # S3 Vectorsは$ne（not equal）をサポートしていない可能性があるため、
-            # 全結果を取得してからPython側でフィルタリング
             results = self.vector_store.similarity_search(
-                query_vector=query_vector,
-                k=k * 2  # 除外後の結果が少なくなることを考慮して多めに取得
+                query_vector=query_vector, k=k,filter_dict=filter_dict
             )
 
             # 除外プロジェクトをフィルタリング
             if exclude_project:
                 filtered_results = [
-                    (doc, score) for doc, score in results
-                    if doc.metadata.get('project_name') != exclude_project
+                    (doc, score)
+                    for doc, score in results
+                    if doc.metadata.get("project_name") != exclude_project
                 ]
                 # k件に制限
                 return filtered_results[:k]
@@ -250,7 +237,7 @@ class RAGRetriever:
         query: str,
         project_name: Optional[str] = None,
         k: int = 5,
-        max_context_chars: int = 5000
+        max_context_chars: int = 5000,
     ) -> str:
         """
         RAGコンテキストを含む拡張プロンプトを作成
@@ -267,9 +254,7 @@ class RAGRetriever:
         """
         # 類似ドキュメントを検索
         results = self.search_similar_documents(
-            query=query,
-            project_name=project_name,
-            k=k
+            query=query, project_name=project_name, k=k
         )
 
         if not results:
@@ -278,8 +263,7 @@ class RAGRetriever:
 
         # 検索結果をフォーマット
         rag_context = self.format_context_for_prompt(
-            results=results,
-            max_chars=max_context_chars
+            results=results, max_chars=max_context_chars
         )
 
         # プロンプトにRAGコンテキストを統合
@@ -305,12 +289,12 @@ class RAGRetriever:
         Returns:
             類似度スコア（0.0-1.0）
         """
-        distance_metric = os.getenv('VECTOR_DISTANCE_METRIC', 'cosine')
+        distance_metric = os.getenv("VECTOR_DISTANCE_METRIC", "cosine")
 
-        if distance_metric == 'cosine':
+        if distance_metric == "cosine":
             # cosine距離は 1 - cosine_similarity
             similarity = max(0.0, min(1.0, 1.0 - distance))
-        elif distance_metric == 'euclidean':
+        elif distance_metric == "euclidean":
             # euclidean距離を類似度に変換
             similarity = 1.0 / (1.0 + distance)
         else:
@@ -320,9 +304,7 @@ class RAGRetriever:
         return similarity
 
     def _calculate_time_score(
-        self,
-        modified_at: Optional[str],
-        created_at: Optional[str]
+        self, modified_at: Optional[str], created_at: Optional[str]
     ) -> float:
         """
         ドキュメントの時間スコアを計算（0.0-1.0）
@@ -344,7 +326,7 @@ class RAGRetriever:
 
         try:
             # ISO 8601形式の日時をパース
-            doc_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            doc_time = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
             now = datetime.now(timezone.utc)
 
             # 経過日数を計算
@@ -352,7 +334,7 @@ class RAGRetriever:
 
             # 新しいほど高スコア（指数関数的に減衰）
             # デフォルトは90日で約50%に減衰
-            decay_days = float(os.getenv('RAG_DECAY_DAYS', '90'))
+            decay_days = float(os.getenv("RAG_DECAY_DAYS", "90"))
             time_score = math.exp(-days_old / decay_days)
 
             return max(0.0, min(1.0, time_score))
@@ -362,9 +344,7 @@ class RAGRetriever:
             return 0.5
 
     def _hybrid_scoring(
-        self,
-        results: List[Tuple[Document, float]],
-        time_weight: float = 0.2
+        self, results: List[Tuple[Document, float]], time_weight: float = 0.2
     ) -> List[Tuple[Document, float]]:
         """
         ハイブリッドスコアリング方式
@@ -387,8 +367,7 @@ class RAGRetriever:
 
             # 時間スコアを計算
             time_score = self._calculate_time_score(
-                doc.metadata.get('modified_at'),
-                doc.metadata.get('created_at')
+                doc.metadata.get("modified_at"), doc.metadata.get("created_at")
             )
 
             # ハイブリッドスコアを計算
@@ -403,8 +382,7 @@ class RAGRetriever:
         return scored_results
 
     def _reranking(
-        self,
-        results: List[Tuple[Document, float]]
+        self, results: List[Tuple[Document, float]]
     ) -> List[Tuple[Document, float]]:
         """
         リランキング方式
@@ -422,18 +400,16 @@ class RAGRetriever:
         sorted_results = sorted(
             results,
             key=lambda x: self._calculate_time_score(
-                x[0].metadata.get('modified_at'),
-                x[0].metadata.get('created_at')
+                x[0].metadata.get("modified_at"), x[0].metadata.get("created_at")
             ),
-            reverse=True
+            reverse=True,
         )
 
         logger.info("リランキング完了（時間でソート）")
         return sorted_results
 
     def _time_decay(
-        self,
-        results: List[Tuple[Document, float]]
+        self, results: List[Tuple[Document, float]]
     ) -> List[Tuple[Document, float]]:
         """
         時間減衰方式
@@ -455,8 +431,7 @@ class RAGRetriever:
 
             # 時間減衰係数を計算
             time_decay = self._calculate_time_score(
-                doc.metadata.get('modified_at'),
-                doc.metadata.get('created_at')
+                doc.metadata.get("modified_at"), doc.metadata.get("created_at")
             )
 
             # 減衰適用済みスコアを計算
@@ -471,8 +446,7 @@ class RAGRetriever:
         return decayed_results
 
     def apply_time_series_weighting(
-        self,
-        results: List[Tuple[Document, float]]
+        self, results: List[Tuple[Document, float]]
     ) -> List[Tuple[Document, float]]:
         """
         環境変数に基づいて時系列重み付けを適用
@@ -493,28 +467,30 @@ class RAGRetriever:
             return results
 
         # 環境変数から方式を取得
-        scoring_method = os.getenv('RAG_SCORING_METHOD', 'hybrid').lower()
+        scoring_method = os.getenv("RAG_SCORING_METHOD", "hybrid").lower()
 
-        if scoring_method == 'hybrid':
+        if scoring_method == "hybrid":
             # ハイブリッドスコアリング
-            time_weight = float(os.getenv('RAG_TIME_WEIGHT', '0.2'))
+            time_weight = float(os.getenv("RAG_TIME_WEIGHT", "0.2"))
             return self._hybrid_scoring(results, time_weight)
 
-        elif scoring_method == 'reranking':
+        elif scoring_method == "reranking":
             # リランキング
             return self._reranking(results)
 
-        elif scoring_method == 'time_decay':
+        elif scoring_method == "time_decay":
             # 時間減衰
             return self._time_decay(results)
 
-        elif scoring_method == 'none':
+        elif scoring_method == "none":
             # 重み付けなし
             logger.info("時系列重み付けをスキップ")
             return results
 
         else:
             # 不明な方式の場合はデフォルト（ハイブリッド）を使用
-            logger.warning(f"不明なスコアリング方式: {scoring_method}、ハイブリッドを使用")
-            time_weight = float(os.getenv('RAG_TIME_WEIGHT', '0.2'))
+            logger.warning(
+                f"不明なスコアリング方式: {scoring_method}、ハイブリッドを使用"
+            )
+            time_weight = float(os.getenv("RAG_TIME_WEIGHT", "0.2"))
             return self._hybrid_scoring(results, time_weight)
