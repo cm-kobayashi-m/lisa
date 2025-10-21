@@ -13,3 +13,4 @@ langchain-google-genai
 reportlab  # Office形式→PDF変換用（オプション）
 tqdm  # 進捗表示用
 unstructured[pdf,md,docx,xlsx,pptx]
+langchain-text-splitters  # テキスト分割用
