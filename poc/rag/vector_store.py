@@ -7,10 +7,17 @@ S3 Vectors (Preview) を使用してベクトルデータの保存と検索を�
 import os
 import json
 import logging
+import time
 from typing import List, Dict, Optional, Any, Tuple
 from dataclasses import dataclass
 import boto3
 from botocore.exceptions import ClientError, BotoCoreError
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type
+)
 
 # ロギング設定
 logger = logging.getLogger(__name__)
@@ -83,6 +90,53 @@ class S3VectorStore:
         # バケットとインデックスの初期化
         if create_if_not_exists:
             self._initialize_storage()
+
+    def _is_throttling_error(self, exception: Exception) -> bool:
+        """スロットリングエラーかどうかを判定"""
+        if isinstance(exception, ClientError):
+            error_code = exception.response.get('Error', {}).get('Code', '')
+            return error_code in ['TooManyRequestsException', 'ThrottlingException', 'RequestLimitExceeded']
+        return False
+
+    @retry(
+        stop=stop_after_attempt(8),
+        wait=wait_exponential(multiplier=2, min=4, max=120),
+        retry=retry_if_exception_type(ClientError),
+        before_sleep=lambda retry_state: (
+            logger.warning(
+                f"S3 Vectors APIレート制限検出 (試行 {retry_state.attempt_number}/8) - "
+                f"{retry_state.next_action.sleep}秒待機してリトライします..."
+            ),
+            print(
+                f"    [リトライ] S3 Vectors APIレート制限 (試行 {retry_state.attempt_number}/8) - "
+                f"{retry_state.next_action.sleep:.0f}秒待機中..."
+            )
+        )
+    )
+    def _put_vectors_with_retry(self, vectors: List[Dict]) -> None:
+        """
+        ベクトルをS3 Vectorsに保存（リトライ機能付き）
+
+        Args:
+            vectors: 保存するベクトルのリスト
+
+        Raises:
+            ClientError: スロットリングエラー以外のエラー時
+        """
+        try:
+            self.client.put_vectors(
+                vectorBucketName=self.vector_bucket_name,
+                indexName=self.index_name,
+                vectors=vectors
+            )
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', '')
+            if self._is_throttling_error(e):
+                logger.warning(f"S3 Vectors APIレート制限: {error_code}")
+                raise  # リトライ
+            else:
+                logger.error(f"ベクトルの追加に失敗（リトライ不可）: {error_code}")
+                raise
 
     def _initialize_storage(self):
         """ベクトルバケットとインデックスを初期化"""
@@ -164,10 +218,12 @@ class S3VectorStore:
             return 0
 
         added_count = 0
+        total_batches = (len(documents) + batch_size - 1) // batch_size
 
         # バッチ処理
-        for i in range(0, len(documents), batch_size):
+        for batch_idx, i in enumerate(range(0, len(documents), batch_size), 1):
             batch = documents[i:i + batch_size]
+            print(f"    [S3 Vectors] バッチ {batch_idx}/{total_batches} ({len(batch)}件) を保存中...")
 
             # S3 Vectors形式に変換
             vectors = []
@@ -181,6 +237,7 @@ class S3VectorStore:
                     "project_name": doc.metadata.get("project_name", ""),
                     "file_name": doc.metadata.get("file_name", ""),
                     "created_at": doc.metadata.get("created_at", ""),
+                    "modified_at": doc.metadata.get("modified_at", ""),
                     "doc_type": doc.metadata.get("doc_type", "document"),
                     "source_text": doc.text[:40000]  # 40KB制限内に収める
                 }
@@ -193,17 +250,21 @@ class S3VectorStore:
 
             if vectors:
                 try:
-                    # ベクトルを追加
-                    self.client.put_vectors(
-                        vectorBucketName=self.vector_bucket_name,
-                        indexName=self.index_name,
-                        vectors=vectors
-                    )
+                    # ベクトルを追加（リトライ機能付き）
+                    self._put_vectors_with_retry(vectors)
                     added_count += len(vectors)
-                    logger.info(f"{len(vectors)}件のベクトルを追加しました")
+                    print(f"    [S3 Vectors] バッチ {batch_idx}/{total_batches} 保存完了 ({added_count}/{len(documents)})")
+
+                    # バッチ間にレート制限対策の待機時間を追加
+                    # 次のバッチがある場合のみ待機
+                    if i + batch_size < len(documents):
+                        print(f"    [待機] レート制限回避のため0.5秒待機中...")
+                        time.sleep(0.5)  # 500ms待機
 
                 except ClientError as e:
-                    logger.error(f"ベクトルの追加に失敗: {e}")
+                    logger.error(f"ベクトルの追加に失敗（全リトライ失敗）: {e}")
+                    print(f"    [ERROR] S3 Vectors保存エラー: {e}")
+                    # リトライ失敗後は継続せず例外をスロー
                     raise
 
         return added_count
@@ -260,6 +321,7 @@ class S3VectorStore:
                         "project_name": metadata.get("project_name", ""),
                         "file_name": metadata.get("file_name", ""),
                         "created_at": metadata.get("created_at", ""),
+                        "modified_at": metadata.get("modified_at", ""),
                         "doc_type": metadata.get("doc_type", "document")
                     }
                 )
@@ -331,6 +393,7 @@ class S3VectorStore:
                         "project_name": metadata.get("project_name", ""),
                         "file_name": metadata.get("file_name", ""),
                         "created_at": metadata.get("created_at", ""),
+                        "modified_at": metadata.get("modified_at", ""),
                         "doc_type": metadata.get("doc_type", "document")
                     },
                     vector=vector_data.get("data", {}).get("float32", [])

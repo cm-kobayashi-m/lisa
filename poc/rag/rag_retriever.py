@@ -3,7 +3,10 @@ RAG検索を行うヘルパークラス
 
 S3 Vectorsから類似ドキュメントを検索し、プロンプトに統合するための機能を提供します。
 """
+import os
 import logging
+import math
+from datetime import datetime, timezone
 from typing import List, Dict, Optional, Any, Tuple
 from dataclasses import dataclass
 
@@ -106,9 +109,20 @@ class RAGRetriever:
         total_chars = len(context)
 
         for i, (doc, score) in enumerate(results, 1):
-            # コサイン類似度を0-100%の範囲に変換
-            # コサイン類似度は-1から1の範囲なので、0から1に正規化してから%に変換
-            similarity_percent = (1 + score) / 2 * 100
+            # S3 Vectorsの距離を類似度に変換
+            # S3 Vectorsは類似度ではなく距離を返すため、メトリックに応じて正規化
+            distance_metric = os.getenv('VECTOR_DISTANCE_METRIC', 'cosine')
+            if distance_metric == 'cosine':
+                # cosine距離は 1 - cosine_similarity
+                similarity = max(0.0, min(1.0, 1.0 - score))
+            elif distance_metric == 'euclidean':
+                # euclidean距離を類似度に変換
+                similarity = 1.0 / (1.0 + score)
+            else:
+                # フォールバック: 既存の計算方法（互換性のため）
+                similarity = (1 + score) / 2
+
+            similarity_percent = similarity * 100
 
             # ドキュメントのテキストをフォーマット
             doc_text = f"### {i}. 関連度: {similarity_percent:.1f}%\n"
@@ -276,3 +290,231 @@ class RAGRetriever:
         enhanced_prompt += "上記の関連情報も考慮して、より深い分析を行ってください。\n"
 
         return enhanced_prompt
+
+    # =========================================================================
+    # 時系列重み付け機能
+    # =========================================================================
+
+    def _convert_distance_to_similarity(self, distance: float) -> float:
+        """
+        S3 Vectorsの距離スコアを類似度（0.0-1.0）に変換
+
+        Args:
+            distance: S3 Vectorsから返された距離スコア
+
+        Returns:
+            類似度スコア（0.0-1.0）
+        """
+        distance_metric = os.getenv('VECTOR_DISTANCE_METRIC', 'cosine')
+
+        if distance_metric == 'cosine':
+            # cosine距離は 1 - cosine_similarity
+            similarity = max(0.0, min(1.0, 1.0 - distance))
+        elif distance_metric == 'euclidean':
+            # euclidean距離を類似度に変換
+            similarity = 1.0 / (1.0 + distance)
+        else:
+            # フォールバック: 既存の計算方法（互換性のため）
+            similarity = (1 + distance) / 2
+
+        return similarity
+
+    def _calculate_time_score(
+        self,
+        modified_at: Optional[str],
+        created_at: Optional[str]
+    ) -> float:
+        """
+        ドキュメントの時間スコアを計算（0.0-1.0）
+
+        新しいドキュメントほど高いスコアを返します。
+        modified_atを優先し、なければcreated_atを使用します。
+
+        Args:
+            modified_at: 更新日時（ISO 8601形式）
+            created_at: 作成日時（ISO 8601形式）
+
+        Returns:
+            時間スコア（0.0-1.0）
+        """
+        # タイムスタンプがない場合は中間値を返す
+        timestamp_str = modified_at or created_at
+        if not timestamp_str:
+            return 0.5
+
+        try:
+            # ISO 8601形式の日時をパース
+            doc_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            now = datetime.now(timezone.utc)
+
+            # 経過日数を計算
+            days_old = (now - doc_time).days
+
+            # 新しいほど高スコア（指数関数的に減衰）
+            # デフォルトは90日で約50%に減衰
+            decay_days = float(os.getenv('RAG_DECAY_DAYS', '90'))
+            time_score = math.exp(-days_old / decay_days)
+
+            return max(0.0, min(1.0, time_score))
+
+        except (ValueError, TypeError) as e:
+            logger.warning(f"時間スコア計算でエラー: {e}, timestamp={timestamp_str}")
+            return 0.5
+
+    def _hybrid_scoring(
+        self,
+        results: List[Tuple[Document, float]],
+        time_weight: float = 0.2
+    ) -> List[Tuple[Document, float]]:
+        """
+        ハイブリッドスコアリング方式
+
+        類似度スコアと時間スコアを重み付けして統合します。
+        final_score = (similarity × (1-α)) + (time_score × α)
+
+        Args:
+            results: 検索結果（Document, 距離）のリスト
+            time_weight: 時間の重み（0.0-1.0、デフォルト: 0.2）
+
+        Returns:
+            スコアリング済みの結果（Document, 統合スコア）のリスト
+        """
+        scored_results = []
+
+        for doc, distance in results:
+            # 距離を類似度に変換
+            similarity = self._convert_distance_to_similarity(distance)
+
+            # 時間スコアを計算
+            time_score = self._calculate_time_score(
+                doc.metadata.get('modified_at'),
+                doc.metadata.get('created_at')
+            )
+
+            # ハイブリッドスコアを計算
+            hybrid_score = (similarity * (1 - time_weight)) + (time_score * time_weight)
+
+            scored_results.append((doc, hybrid_score))
+
+        # スコアの降順でソート
+        scored_results.sort(key=lambda x: x[1], reverse=True)
+
+        logger.info(f"ハイブリッドスコアリング完了（time_weight={time_weight}）")
+        return scored_results
+
+    def _reranking(
+        self,
+        results: List[Tuple[Document, float]]
+    ) -> List[Tuple[Document, float]]:
+        """
+        リランキング方式
+
+        類似度で検索した結果を時間でソートします。
+        元の距離スコアは保持されます。
+
+        Args:
+            results: 検索結果（Document, 距離）のリスト
+
+        Returns:
+            時間でソート済みの結果（Document, 距離）のリスト
+        """
+        # 時間スコアでソート
+        sorted_results = sorted(
+            results,
+            key=lambda x: self._calculate_time_score(
+                x[0].metadata.get('modified_at'),
+                x[0].metadata.get('created_at')
+            ),
+            reverse=True
+        )
+
+        logger.info("リランキング完了（時間でソート）")
+        return sorted_results
+
+    def _time_decay(
+        self,
+        results: List[Tuple[Document, float]]
+    ) -> List[Tuple[Document, float]]:
+        """
+        時間減衰方式
+
+        類似度スコアに時間減衰を適用します。
+        final_score = similarity × time_decay
+
+        Args:
+            results: 検索結果（Document, 距離）のリスト
+
+        Returns:
+            時間減衰適用済みの結果（Document, 減衰後スコア）のリスト
+        """
+        decayed_results = []
+
+        for doc, distance in results:
+            # 距離を類似度に変換
+            similarity = self._convert_distance_to_similarity(distance)
+
+            # 時間減衰係数を計算
+            time_decay = self._calculate_time_score(
+                doc.metadata.get('modified_at'),
+                doc.metadata.get('created_at')
+            )
+
+            # 減衰適用済みスコアを計算
+            decayed_score = similarity * time_decay
+
+            decayed_results.append((doc, decayed_score))
+
+        # スコアの降順でソート
+        decayed_results.sort(key=lambda x: x[1], reverse=True)
+
+        logger.info("時間減衰適用完了")
+        return decayed_results
+
+    def apply_time_series_weighting(
+        self,
+        results: List[Tuple[Document, float]]
+    ) -> List[Tuple[Document, float]]:
+        """
+        環境変数に基づいて時系列重み付けを適用
+
+        RAG_SCORING_METHOD環境変数によって適切な方式を選択します：
+        - 'hybrid': ハイブリッドスコアリング（デフォルト）
+        - 'reranking': リランキング方式
+        - 'time_decay': 時間減衰方式
+        - 'none': 重み付けなし（元の結果をそのまま返す）
+
+        Args:
+            results: 検索結果（Document, 距離/スコア）のリスト
+
+        Returns:
+            時系列重み付け適用済みの結果（Document, スコア）のリスト
+        """
+        if not results:
+            return results
+
+        # 環境変数から方式を取得
+        scoring_method = os.getenv('RAG_SCORING_METHOD', 'hybrid').lower()
+
+        if scoring_method == 'hybrid':
+            # ハイブリッドスコアリング
+            time_weight = float(os.getenv('RAG_TIME_WEIGHT', '0.2'))
+            return self._hybrid_scoring(results, time_weight)
+
+        elif scoring_method == 'reranking':
+            # リランキング
+            return self._reranking(results)
+
+        elif scoring_method == 'time_decay':
+            # 時間減衰
+            return self._time_decay(results)
+
+        elif scoring_method == 'none':
+            # 重み付けなし
+            logger.info("時系列重み付けをスキップ")
+            return results
+
+        else:
+            # 不明な方式の場合はデフォルト（ハイブリッド）を使用
+            logger.warning(f"不明なスコアリング方式: {scoring_method}、ハイブリッドを使用")
+            time_weight = float(os.getenv('RAG_TIME_WEIGHT', '0.2'))
+            return self._hybrid_scoring(results, time_weight)

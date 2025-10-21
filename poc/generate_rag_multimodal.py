@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
 
 # Google Drive API
 from google.auth.transport.requests import Request
@@ -54,6 +56,7 @@ TOKEN_FILE = 'token.yaml'
 CREDENTIALS_FILE = 'credentials.json'
 TEMP_DIR = 'temp_files'
 MAX_FILE_SIZE = 3
+MAX_WORKERS = 25  # 並列処理の最大ワーカー数（S3 Vectors APIのレート制限を考慮）
 
 # MS Office to Google Workspace MIMEタイプマッピング
 OFFICE_TO_GOOGLE_MIME = {
@@ -296,16 +299,21 @@ class MultimodalChunker:
         file_name = file_info['name']
         mime_type = file_info['mimeType']
 
+        print(f"\n  ========================================")
         print(f"  処理中: {file_name}")
+        print(f"  ========================================")
 
         # ファイルサイズチェック
         file_size = int(file_info.get('size', 0))
+        print(f"    [情報] ファイルサイズ: {file_size / 1024:.1f}KB, MIMEタイプ: {mime_type}")
+
         if file_size > MAX_FILE_SIZE * 1024 * 1024:
             print(f"    [SKIP] ファイルサイズが大きすぎます: {file_size / 1024 / 1024:.1f}MB")
             return []
 
         try:
             # ファイルをダウンロードまたはエクスポート（MS OfficeはPDF変換）
+            print(f"    [開始] ダウンロード処理を開始...")
             download_result = self._download_file(service, file_id, file_name, mime_type)
 
             if not download_result:
@@ -316,6 +324,13 @@ class MultimodalChunker:
 
             # Geminiでチャンク化を実行（実際のMIMEタイプを使用）
             chunks = self._request_chunking(file_content, file_name, actual_mime_type, project_name)
+
+            # ファイルの更新日時・作成日時をメタデータに追加
+            for chunk in chunks:
+                if 'modifiedTime' in file_info:
+                    chunk['metadata']['modified_at'] = file_info['modifiedTime']
+                if 'createdTime' in file_info:
+                    chunk['metadata']['created_at'] = file_info['createdTime']
 
             print(f"    {len(chunks)}個のチャンクを生成")
             return chunks
@@ -331,17 +346,19 @@ class MultimodalChunker:
             if mime_type in ['application/vnd.google-apps.document',
                            'application/vnd.google-apps.presentation',
                            'application/vnd.google-apps.spreadsheet']:
+                print(f"    [ダウンロード] Google形式ファイルをPDFエクスポート中...")
                 request = service.files().export_media(fileId=file_id, mimeType='application/pdf')
                 file_stream = io.BytesIO()
                 downloader = MediaIoBaseDownload(file_stream, request)
                 done = False
                 while not done:
                     status, done = downloader.next_chunk()
+                print(f"    [ダウンロード] 完了 ({len(file_stream.getvalue()) / 1024 / 1024:.2f}MB)")
                 return file_stream.getvalue(), 'application/pdf'
 
             # MS Office形式の場合はGoogle Drive経由でPDF変換
             elif mime_type in OFFICE_TO_GOOGLE_MIME:
-                print(f"    MS Officeファイルを検出、PDF変換を実行...")
+                print(f"    [ダウンロード] MS Officeファイルを検出、PDF変換を実行...")
                 # まずファイルをダウンロード
                 request = service.files().get_media(fileId=file_id)
                 file_stream = io.BytesIO()
@@ -351,6 +368,7 @@ class MultimodalChunker:
                     status, done = downloader.next_chunk()
 
                 file_content = file_stream.getvalue()
+                print(f"    [ダウンロード] 完了 ({len(file_content) / 1024 / 1024:.2f}MB)")
 
                 # Google Drive経由でPDF変換
                 result = convert_office_via_google_drive(service, file_content, file_name, mime_type)
@@ -363,12 +381,14 @@ class MultimodalChunker:
 
             else:
                 # その他のファイル（PDF、画像など）はそのままダウンロード
+                print(f"    [ダウンロード] ファイルダウンロード中...")
                 request = service.files().get_media(fileId=file_id)
                 file_stream = io.BytesIO()
                 downloader = MediaIoBaseDownload(file_stream, request)
                 done = False
                 while not done:
                     status, done = downloader.next_chunk()
+                print(f"    [ダウンロード] 完了 ({len(file_stream.getvalue()) / 1024 / 1024:.2f}MB)")
                 return file_stream.getvalue(), mime_type
 
         except Exception as e:
@@ -377,6 +397,8 @@ class MultimodalChunker:
 
     def _request_chunking(self, file_content: bytes, file_name: str, mime_type: str, project_name: str) -> List[Dict]:
         """Geminiにチャンク化を依頼"""
+
+        print(f"    [処理] Geminiでチャンク化を開始...")
 
         # チャンク化用のプロンプト
         chunk_prompt = f"""
@@ -411,6 +433,7 @@ class MultimodalChunker:
 重要: 必ず有効なJSONフォーマットで返してください。
 """
 
+        response_text = ""  # エラーハンドリング用に初期化
         try:
             # ファイルサイズによって送信方法を決定
             print(
@@ -418,7 +441,9 @@ class MultimodalChunker:
             )
 
             # インラインで送信
-            print("    Geminiにインラインで送信中...")
+            import time
+            start_time = time.time()
+            print(f"    [Gemini] APIリクエスト送信中... ({time.strftime('%H:%M:%S')})")
             contents = [
                 chunk_prompt,
                 {
@@ -431,22 +456,77 @@ class MultimodalChunker:
 
             response = self.client.models.generate_content(
                 model=self.model_name,
-                contents=contents
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    max_output_tokens=8192,  # 出力トークン数を明示的に指定
+                    temperature=0.2,          # より確実な出力のため低めに設定
+                    response_mime_type="application/json",  # JSON出力を強制
+                    response_schema={
+                        "type": "object",
+                        "properties": {
+                            "chunks": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "chunk_index": {"type": "integer"},
+                                        "title": {"type": "string"},
+                                        "content": {"type": "string"},
+                                        "topics": {
+                                            "type": "array",
+                                            "items": {"type": "string"}
+                                        },
+                                        "importance": {
+                                            "type": "string",
+                                            "enum": ["high", "medium", "low"]
+                                        }
+                                    },
+                                    "required": ["chunk_index", "title", "content", "topics", "importance"]
+                                }
+                            }
+                        },
+                        "required": ["chunks"]
+                    }
+                )
             )
+
+            # レスポンスの検証
+            print(f"    [Gemini] レスポンス受信完了")
+            if not response or not response.text:
+                print(f"    [ERROR] Geminiからの応答が空です")
+                print(f"    [DEBUG] レスポンス: {response}")
+                if hasattr(response, 'candidates') and response.candidates:
+                    for i, candidate in enumerate(response.candidates):
+                        print(f"    [DEBUG] Candidate {i}: {candidate}")
+                        if hasattr(candidate, 'finish_reason'):
+                            print(f"    [DEBUG] Finish reason: {candidate.finish_reason}")
+                        if hasattr(candidate, 'safety_ratings'):
+                            print(f"    [DEBUG] Safety ratings: {candidate.safety_ratings}")
+                print(f"    [INFO] フォールバックモードで処理を続行します")
+                return self._simple_chunk(file_content, file_name, project_name)
 
             # レスポンスからJSONを抽出
             response_text = response.text
+            print(f"    [Gemini] JSONパース中...")
 
-            # JSONブロックを抽出（```json ... ``` の形式を処理）
-            if '```json' in response_text:
-                start = response_text.find('```json') + 7
-                end = response_text.find('```', start)
-                json_str = response_text[start:end].strip()
-            else:
-                json_str = response_text
+            # response_mime_type="application/json"を指定した場合、
+            # Geminiは直接JSONを返すため、そのままパース可能
+            # ただし、念のため```json ... ```のラッパーも処理
+            json_str = response_text.strip()
+
+            # マークダウンのコードブロックがあれば除去
+            if json_str.startswith('```json'):
+                json_str = json_str[7:]  # '```json'を除去
+            if json_str.startswith('```'):
+                json_str = json_str[3:]  # '```'を除去
+            if json_str.endswith('```'):
+                json_str = json_str[:-3]  # 末尾の'```'を除去
+
+            json_str = json_str.strip()
 
             # JSONをパース
             result = json.loads(json_str)
+            print(f"    [Gemini] {len(result.get('chunks', []))}個のチャンクを取得")
 
             # チャンク情報を整形
             chunks = []
@@ -467,11 +547,22 @@ class MultimodalChunker:
 
         except json.JSONDecodeError as e:
             print(f"    [ERROR] JSON解析エラー: {e}")
+            if response_text:
+                print(f"    [DEBUG] レスポンスの最初の500文字: {response_text[:500]}")
+                print(f"    [DEBUG] レスポンスの最後の500文字: {response_text[-500:]}")
+            print(f"    [INFO] フォールバックモードで処理を続行します")
             # フォールバック：単純な分割
+            return self._simple_chunk(file_content, file_name, project_name)
+        except AttributeError as e:
+            print(f"    [ERROR] レスポンス属性エラー: {e}")
+            print(f"    [DEBUG] レスポンスオブジェクトの型: {type(response) if 'response' in locals() else 'レスポンス未定義'}")
+            print(f"    [INFO] フォールバックモードで処理を続行します")
             return self._simple_chunk(file_content, file_name, project_name)
         except Exception as e:
             print(f"    [ERROR] チャンク化エラー: {e}")
-            return []
+            print(f"    [DEBUG] エラー詳細: {traceback.format_exc()}")
+            print(f"    [INFO] フォールバックモードで処理を続行します")
+            return self._simple_chunk(file_content, file_name, project_name)
 
     def _simple_chunk(self, file_content: bytes, file_name: str, project_name: str) -> List[Dict]:
         """フォールバック用の単純なチャンク分割"""
@@ -529,9 +620,14 @@ class VectorDBBuilder:
         if not chunks:
             return 0
 
+        print(f"    [処理] {len(chunks)}個のチャンクをベクトル化中...")
         documents = []
 
-        for chunk_info in chunks:
+        for i, chunk_info in enumerate(chunks, 1):
+            # 進捗表示（10個ごと）
+            if i % 10 == 0 or i == len(chunks):
+                print(f"    [進捗] ベクトル化: {i}/{len(chunks)}")
+
             text = chunk_info['text']
             metadata = chunk_info['metadata']
 
@@ -556,11 +652,62 @@ class VectorDBBuilder:
                 print(f"    [WARN] ベクトル化エラー: {e}")
 
         # ベクトルストアに保存
+        # バッチサイズを小さくしてレート制限を回避
         if documents:
-            added = self.vector_store.add_documents(documents, batch_size=5)
+            print(f"    [処理] {len(documents)}個のドキュメントをS3 Vectorsに保存中...")
+            added = self.vector_store.add_documents(documents, batch_size=3)
             return added
 
         return 0
+
+
+def _process_single_file_rag(creds, chunker: MultimodalChunker, vector_db: VectorDBBuilder,
+                            file_info: Dict, project_name: str) -> Optional[int]:
+    """
+    単一ファイルのRAG処理を行うワーカー関数。
+    ThreadPoolExecutorの各スレッドで実行される。
+
+    Args:
+        creds: Google Drive API認証情報（スレッドセーフ）
+        chunker: MultimodalChunkerインスタンス
+        vector_db: VectorDBBuilderインスタンス
+        file_info: ファイル情報（id, name, mimeType, size等）
+        project_name: プロジェクト名
+
+    Returns:
+        保存されたドキュメント数、または None（失敗時）
+    """
+    import threading
+    thread_id = threading.current_thread().name
+
+    try:
+        # スレッド開始をログ
+        print(f"[Thread-{thread_id}] ファイル処理開始: {file_info['name']}")
+
+        # 各スレッド内で独自のserviceオブジェクトを生成（スレッドセーフ）
+        service = build('drive', 'v3', credentials=creds)
+
+        # Geminiでチャンク化
+        chunks = chunker.chunk_file_with_gemini(service, file_info, project_name)
+
+        if chunks:
+            # ベクトルDBに保存
+            added = vector_db.save_chunks_to_vector_db(chunks, file_info['name'])
+            print(f"    ✓ {added}個のドキュメントを保存完了")
+            print(f"  ======================================== \n")
+            return added
+
+        print(f"  ======================================== \n")
+        return 0
+
+    except Exception as e:
+        print(f"[Thread-{thread_id}] [ERROR] '{file_info['name']}' の処理中にエラーが発生: {e}")
+        print(f"  ======================================== \n")
+        import traceback
+        print(f"[Thread-{thread_id}] エラー詳細:\n{traceback.format_exc()}")
+        return None
+    finally:
+        print(f"[Thread-{thread_id}] ファイル処理終了: {file_info['name']}")
 
 
 def main():
@@ -645,20 +792,35 @@ def main():
 
         project_docs = 0
 
-        for i, file_info in enumerate(files, 1):
-            print(f"\n[{i}/{len(files)}]", end=" ")
+        # 並列処理でファイルを処理
+        print(f"\n[INFO] 並列処理開始: {len(files)}ファイル, {MAX_WORKERS}ワーカー")
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            future_to_file = {
+                executor.submit(_process_single_file_rag, creds, chunker, vector_db, file_info, project_name): file_info
+                for file_info in files
+            }
 
-            # Geminiでチャンク化
-            chunks = chunker.chunk_file_with_gemini(service, file_info, project_name)
+            print(f"[INFO] {len(future_to_file)}個のタスクを投入しました")
 
-            if chunks:
-                # ベクトルDBに保存
-                added = vector_db.save_chunks_to_vector_db(chunks, file_info['name'])
-                project_docs += added
-                print(f"    {added}個のドキュメントを保存")
+            progress_bar = tqdm(as_completed(future_to_file), total=len(files), desc=f"Processing files for {project_name}")
+            completed_count = 0
+            for future in progress_bar:
+                file_info = future_to_file[future]
+                completed_count += 1
+                print(f"\n[INFO] タスク完了 ({completed_count}/{len(files)}): {file_info['name']}")
+                try:
+                    result = future.result()
+                    if result is not None and result > 0:
+                        project_docs += result
+                except Exception as exc:
+                    print(f"[ERROR] '{file_info['name']}' の処理中に例外が発生: {exc}")
+                    import traceback
+                    print(f"[ERROR] 例外詳細:\n{traceback.format_exc()}")
 
-            # メモリ解放
-            gc.collect()
+            print(f"\n[INFO] 全タスク完了: {len(files)}ファイル処理完了")
+
+        # メモリ解放
+        gc.collect()
 
         total_docs += project_docs
         print(f"\n[INFO] {project_name}: {project_docs}個のドキュメントを処理")

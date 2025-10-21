@@ -16,8 +16,10 @@ from tenacity import (
     retry,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type
+    retry_if_exception_type,
+    retry_if_exception
 )
+from httpx import ConnectError, TimeoutException
 
 # ロギング設定
 logger = logging.getLogger(__name__)
@@ -25,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 class GeminiQuotaError(Exception):
     """Gemini APIのクォータ制限エラー"""
+    pass
+
+
+class GeminiNetworkError(Exception):
+    """Gemini APIのネットワーク接続エラー"""
     pass
 
 
@@ -76,12 +83,34 @@ class GeminiEmbeddings:
         error_msg = str(exception).lower()
         return any(keyword in error_msg for keyword in ['429', 'quota', 'rate limit'])
 
+    def _is_network_error(self, exception: Exception) -> bool:
+        """ネットワークエラーかどうかを判定"""
+        # ConnectError, TimeoutException, DNS エラーなどを検出
+        if isinstance(exception, (ConnectError, TimeoutException)):
+            return True
+        error_msg = str(exception).lower()
+        network_keywords = [
+            'nodename nor servname provided',
+            'connection refused',
+            'connection reset',
+            'connection timeout',
+            'name resolution',
+            'dns',
+            'network unreachable',
+            'host unreachable'
+        ]
+        return any(keyword in error_msg for keyword in network_keywords)
+
+    def _should_retry(self, exception: Exception) -> bool:
+        """リトライすべきエラーかどうかを判定"""
+        return self._is_quota_error(exception) or self._is_network_error(exception)
+
     @retry(
         stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=1, min=1, max=60),
-        retry=retry_if_exception_type(GeminiQuotaError),
+        wait=wait_exponential(multiplier=2, min=2, max=60),
+        retry=retry_if_exception_type((GeminiQuotaError, GeminiNetworkError)),
         before_sleep=lambda retry_state: logger.warning(
-            f"クォータ制限検出 (試行 {retry_state.attempt_number}/5) - "
+            f"API エラー検出 (試行 {retry_state.attempt_number}/5) - "
             f"{retry_state.next_action.sleep}秒待機してリトライします..."
         )
     )
@@ -136,10 +165,16 @@ class GeminiEmbeddings:
                 return [0.0] * self.dimension
 
         except Exception as e:
+            # エラーの種類を判定してリトライ可能な例外として再スロー
             if self._is_quota_error(e):
+                logger.warning(f"クォータ制限エラー検出: {e}")
                 raise GeminiQuotaError(str(e))
+            elif self._is_network_error(e):
+                logger.warning(f"ネットワークエラー検出: {e}")
+                print(f"[DEBUG] ネットワークエラーの詳細: {type(e).__name__}: {e}")
+                raise GeminiNetworkError(str(e))
             else:
-                logger.error(f"テキストのベクトル化に失敗: {e}")
+                logger.error(f"テキストのベクトル化に失敗（リトライ不可）: {e}")
                 # エラーの詳細をログに記録
                 print(f"[DEBUG] エラーの詳細: {type(e).__name__}: {e}")
                 raise
@@ -178,8 +213,16 @@ class GeminiEmbeddings:
                     # レート制限対策として少し待機
                     time.sleep(0.1)
 
+                except (GeminiQuotaError, GeminiNetworkError) as e:
+                    # リトライ可能なエラーは embed_text() で既にリトライ済み
+                    # ここに到達するのは全リトライ失敗後
+                    logger.error(f"テキストのベクトル化に失敗（リトライ失敗）: {e}")
+                    print(f"[WARN] ベクトル化エラー: {e}")
+                    # エラー時はゼロベクトルで埋める
+                    batch_embeddings.append([0.0] * self.dimension)
                 except Exception as e:
-                    logger.error(f"テキストのベクトル化に失敗: {e}")
+                    logger.error(f"テキストのベクトル化に失敗（予期しないエラー）: {e}")
+                    print(f"[ERROR] 予期しないベクトル化エラー: {type(e).__name__}: {e}")
                     # エラー時はゼロベクトルで埋める
                     batch_embeddings.append([0.0] * self.dimension)
 
@@ -230,10 +273,16 @@ class GeminiEmbeddings:
                 return [0.0] * self.dimension
 
         except Exception as e:
+            # エラーの種類を判定してリトライ可能な例外として再スロー
             if self._is_quota_error(e):
+                logger.warning(f"クォータ制限エラー検出: {e}")
                 raise GeminiQuotaError(str(e))
+            elif self._is_network_error(e):
+                logger.warning(f"ネットワークエラー検出: {e}")
+                print(f"[DEBUG] ネットワークエラーの詳細: {type(e).__name__}: {e}")
+                raise GeminiNetworkError(str(e))
             else:
-                logger.error(f"クエリのベクトル化に失敗: {e}")
+                logger.error(f"クエリのベクトル化に失敗（リトライ不可）: {e}")
                 print(f"[DEBUG] エラーの詳細: {type(e).__name__}: {e}")
                 raise
 
