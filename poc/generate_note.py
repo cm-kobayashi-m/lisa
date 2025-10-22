@@ -19,19 +19,15 @@ from typing import List, Dict, Tuple, Any
 from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-# Google Drive API (フォルダリスト取得用)
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
+# Google Drive API は使用しない（project_config.yamlで管理）
 
 # Gemini API (新SDK)
 from google import genai
 
+# プロジェクト設定
+from project_config import ProjectConfig
+
 # 定数
-SCOPES = ['https://www.googleapis.com/auth/drive.metadata.readonly']  # フォルダリストのみ必要
-TOKEN_FILE = 'token.yaml'
-CREDENTIALS_FILE = 'credentials.json'
 OUTPUT_DIR = 'outputs'
 EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', "gemini-embedding-001")
 DIMENSION = int(os.getenv('DIMENSION', 1536))
@@ -39,81 +35,6 @@ DIMENSION = int(os.getenv('DIMENSION', 1536))
 # 環境変数読み込み
 load_dotenv()
 
-
-def authenticate():
-    """OAuth 2.0認証（Google Drive API用）- 最小権限スコープ"""
-    creds = None
-
-    # token.yamlが存在する場合は読み込み
-    if os.path.exists(TOKEN_FILE):
-        with open(TOKEN_FILE, 'r') as token:
-            token_data = yaml.safe_load(token)
-            creds = Credentials(
-                token=token_data['token'],
-                refresh_token=token_data.get('refresh_token'),
-                token_uri=token_data.get('token_uri'),
-                client_id=token_data.get('client_id'),
-                client_secret=token_data.get('client_secret'),
-                scopes=token_data.get('scopes')
-            )
-
-    # 認証情報が無効または存在しない場合は再認証
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            if not os.path.exists(CREDENTIALS_FILE):
-                print(f"[ERROR] {CREDENTIALS_FILE} が見つかりません。")
-                print("Google Cloud Consoleからダウンロードして配置してください。")
-                sys.exit(1)
-
-            flow = InstalledAppFlow.from_client_secrets_file(
-                CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
-
-        # token.yamlに保存
-        token_data = {
-            'token': creds.token,
-            'refresh_token': creds.refresh_token,
-            'token_uri': creds.token_uri,
-            'client_id': creds.client_id,
-            'client_secret': creds.client_secret,
-            'scopes': creds.scopes
-        }
-        with open(TOKEN_FILE, 'w') as token:
-            yaml.safe_dump(token_data, token, default_flow_style=False)
-
-    return creds
-
-
-def get_drive_service(creds):
-    """Google Drive サービス取得"""
-    return build('drive', 'v3', credentials=creds)
-
-
-def list_project_folders(service, projects_folder_id: str) -> List[Dict[str, str]]:
-    """案件情報フォルダ配下のフォルダ一覧を取得"""
-    query = f"'{projects_folder_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
-
-    results = service.files().list(
-        q=query,
-        fields="files(id, name)",
-        orderBy="name"
-    ).execute()
-
-    folders = results.get('files', [])
-    return folders
-
-
-def filter_projects(all_projects: List[Dict[str, str]], project_names: str) -> List[Dict[str, str]]:
-    """環境変数で指定された案件でフィルタリング"""
-    if project_names == "*":
-        return all_projects
-
-    target_names = [name.strip() for name in project_names.split(',')]
-    filtered = [p for p in all_projects if p['name'] in target_names]
-
-    return filtered
 
 
 
@@ -142,6 +63,165 @@ def initialize_gemini_client() -> genai.Client:
 
 
 # ===== RAG 2段階検索用ヘルパー関数 =====
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type(GeminiQuotaError)
+)
+def generate_project_keywords(client: genai.Client, project_name: str) -> str:
+    """プロジェクト名から検索用キーワードを生成
+
+    Args:
+        client: Gemini APIクライアント
+        project_name: プロジェクト名
+
+    Returns:
+        生成されたキーワード（スペース区切り）
+    """
+    prompt = f"""プロジェクト名から、そのプロジェクトに関連しそうなキーワードを抽出してください。
+
+プロジェクト名: {project_name}
+
+以下の観点でキーワードを生成してください：
+- 業界/ドメイン（金融、EC、製造、物流、小売等）
+- 技術/ツール（AI、データ分析、API、クラウド等）
+- 課題/目的（業務改善、自動化、統合、最適化等）
+- プロジェクトタイプ（システム開発、データ基盤、分析、導入等）
+
+出力形式: スペース区切りのキーワード（説明不要、日本語可）
+例: EC データ分析 売上予測 機械学習 AWS"""
+
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+
+    try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=prompt
+        )
+        keywords = response.text.strip()
+        # 改行やタブをスペースに変換
+        keywords = ' '.join(keywords.split())
+        print(f"[INFO] 生成されたキーワード: {keywords}")
+        return keywords
+    except Exception as e:
+        if _is_quota_error(e):
+            raise GeminiQuotaError(str(e))
+        else:
+            print(f"[WARN] キーワード生成に失敗しました: {e}")
+            # フォールバック: プロジェクト名をそのまま返す
+            return project_name
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type(GeminiQuotaError)
+)
+def generate_project_summary(client: genai.Client, project_name: str, current_results: List[Tuple]) -> str:
+    """現在のプロジェクトの情報から概要を生成
+
+    Args:
+        client: Gemini APIクライアント
+        project_name: プロジェクト名
+        current_results: 現在のプロジェクトの検索結果
+
+    Returns:
+        プロジェクト概要
+    """
+    # 上位3件の情報を使用
+    context = ""
+    if current_results:
+        # 簡易的なコンテキスト作成（上位3件まで）
+        for i, (doc, distance) in enumerate(current_results[:3]):
+            if i >= 3:
+                break
+            context += f"[文書{i+1}]\n{doc.text[:500]}\n\n"
+
+    prompt = f"""以下のプロジェクト情報から、このプロジェクトの特徴・概要を抽出してください。
+
+プロジェクト名: {project_name}
+
+プロジェクト情報:
+{context if context else "（情報なし）"}
+
+以下の観点で100文字程度で要約してください：
+- 業界/分野
+- 主要な課題/目的
+- 使用技術
+- プロジェクト規模
+
+出力形式: 簡潔な文章で要約（箇条書き不要）"""
+
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+
+    try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=prompt
+        )
+        summary = response.text.strip()
+        print(f"[INFO] 生成されたプロジェクト概要: {summary[:100]}...")
+        return summary
+    except Exception as e:
+        if _is_quota_error(e):
+            raise GeminiQuotaError(str(e))
+        else:
+            print(f"[WARN] プロジェクト概要生成に失敗しました: {e}")
+            # フォールバック: プロジェクト名をそのまま返す
+            return project_name
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type(GeminiQuotaError)
+)
+def generate_similar_project_query(client: genai.Client, project_summary: str, project_name: str) -> str:
+    """プロジェクト概要から類似プロジェクト検索用クエリを生成
+
+    Args:
+        client: Gemini APIクライアント
+        project_summary: プロジェクト概要
+        project_name: 現在のプロジェクト名（除外用）
+
+    Returns:
+        類似プロジェクト検索用クエリ
+    """
+    prompt = f"""以下のプロジェクト概要から、類似プロジェクトを検索するためのクエリを生成してください。
+現在のプロジェクト名は除外してください。
+
+現在のプロジェクト: {project_name}
+プロジェクト概要: {project_summary}
+
+類似プロジェクトを見つけるため、以下の要素を含むクエリを生成：
+- 同じ業界/分野のキーワード
+- 類似の課題/ソリューション
+- 同じ技術スタック
+- 類似の規模/複雑さ
+
+出力形式: 検索に適した短いキーワードフレーズ（50文字以内、スペース区切り）"""
+
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+
+    try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=prompt
+        )
+        query = response.text.strip()
+        # 改行やタブをスペースに変換
+        query = ' '.join(query.split())[:100]  # 100文字以内に制限
+        print(f"[INFO] 生成された類似プロジェクト検索クエリ: {query}")
+        return query
+    except Exception as e:
+        if _is_quota_error(e):
+            raise GeminiQuotaError(str(e))
+        else:
+            print(f"[WARN] 類似プロジェクト検索クエリ生成に失敗しました: {e}")
+            # フォールバック: プロジェクト概要の一部を返す
+            return project_summary[:50] if project_summary else project_name
+
 
 def normalize_score(distance: float, metric: str = 'cosine') -> float:
     """
@@ -369,9 +449,15 @@ def generate_final_reflection_note(client: genai.Client, project_name: str) -> t
         )
         retriever = RAGRetriever(vector_store, embeddings)
 
-        # プロジェクト名からキーワードを生成（RAG専用）
-        all_text = f"{project_name}"
-        print(f"[INFO] RAG専用モード: プロジェクト名から検索クエリを生成")
+        # ===== PHASE 1: プロジェクト名から拡張キーワードを生成 =====
+        print(f"[INFO] RAG専用モード: プロジェクト名から拡張キーワードを生成中...")
+        try:
+            expanded_keywords = generate_project_keywords(client, project_name)
+            search_query = expanded_keywords  # 拡張キーワードを検索クエリとして使用
+            print(f"[INFO] 検索クエリ（拡張済み）: {search_query[:100]}...")
+        except Exception as e:
+            print(f"[WARN] キーワード生成に失敗、プロジェクト名を使用: {e}")
+            search_query = project_name
 
         # k値を動的に決定（RAG専用モードの大きな値を使用）
         base_k_current = int(os.getenv('RAG_ONLY_MODE_K_CURRENT', '30'))
@@ -392,11 +478,12 @@ def generate_final_reflection_note(client: genai.Client, project_name: str) -> t
         min_score = float(os.getenv('RAG_ONLY_MODE_MIN_SCORE', '0.3'))
         print(f"[INFO] RAG専用モード: 最小類似度スコア={min_score}")
 
-        # 第1段階: 現在のプロジェクトの過去情報を検索
+        # ===== PHASE 2: 現在のプロジェクトの過去情報を検索（改善版） =====
         current_project_results = []
         if k_current > 0:
+            print(f"[INFO] 第1段階: 拡張キーワードで現在のプロジェクトを検索中...")
             current_project_results = retriever.search_similar_documents(
-                query=all_text[:1000],
+                query=search_query[:1000],  # 拡張キーワードで検索
                 project_name=project_name,
                 k=k_current
             )
@@ -413,12 +500,35 @@ def generate_final_reflection_note(client: genai.Client, project_name: str) -> t
             k_current, k_similar, len(current_project_results)
         )
 
-        # 第2段階: 類似プロジェクトの情報を検索
+        # ===== PHASE 3: プロジェクト概要を生成 =====
+        project_summary = ""
+        if current_project_results:
+            print(f"[INFO] プロジェクト概要を生成中...")
+            try:
+                project_summary = generate_project_summary(client, project_name, current_project_results)
+            except Exception as e:
+                print(f"[WARN] プロジェクト概要生成に失敗: {e}")
+                project_summary = search_query  # フォールバック
+
+        # ===== PHASE 4: 類似プロジェクト検索用クエリを生成 =====
+        similar_search_query = ""
+        if project_summary:
+            print(f"[INFO] 類似プロジェクト検索用クエリを生成中...")
+            try:
+                similar_search_query = generate_similar_project_query(client, project_summary, project_name)
+            except Exception as e:
+                print(f"[WARN] 類似検索クエリ生成に失敗: {e}")
+                similar_search_query = project_summary[:100]  # フォールバック
+        else:
+            # プロジェクト概要がない場合は拡張キーワードを使用
+            similar_search_query = search_query
+
+        # ===== PHASE 5: 類似プロジェクトの情報を検索（改善版） =====
         similar_project_results = []
-        if k_similar > 0:
+        if k_similar > 0 and similar_search_query:
+            print(f"[INFO] 第2段階: 生成されたクエリで類似プロジェクトを検索中...")
             similar_project_results = retriever.get_cross_project_insights(
-                # todo: プロジェクト名の検索では不足
-                query=all_text[:1000]+"の参考になるプロジェクト情報がほしい",
+                query=similar_search_query[:1000],  # 生成されたクエリで検索
                 exclude_project=project_name,
                 k=k_similar
             )
@@ -476,21 +586,12 @@ def generate_final_reflection_note(client: genai.Client, project_name: str) -> t
     # 改善版のプロンプトを使用
     from improved_prompts import get_final_reflection_prompt
 
-    # テンプレート読み込み
-    template_path = Path(__file__).parent / "案件情報ノート.md"
-    if template_path.exists():
-        with open(template_path, 'r', encoding='utf-8') as f:
-            template = f.read()
-    else:
-        template = "リフレクションノートのテンプレートが見つかりません。"
-
     # RAG専用モード: RAGコンテキストのみ
     summaries_text = rag_context if rag_context else "情報がありません。"
 
     # 改善版プロンプトを生成
     prompt = get_final_reflection_prompt(
         project_name=project_name,
-        template=template,
         summaries_text=summaries_text
     )
 
@@ -891,40 +992,54 @@ def main():
     print("[INFO] RAGインデックスから情報を取得してノートを生成します")
     print()
 
+    # コマンドライン引数処理（オプション）
+    import argparse
+    parser = argparse.ArgumentParser(description="リフレクションノート自動生成")
+    parser.add_argument("--project", type=str, help="特定のプロジェクトのみ処理")
+    parser.add_argument("--config", type=str, default="project_config.yaml", help="設定ファイルのパス")
+    args = parser.parse_args()
+
     # 環境変数チェック
     api_key = os.getenv('GEMINI_API_KEY')
-    projects_folder_id = os.getenv('PROJECTS_FOLDER_ID')
-    project_names = os.getenv('PROJECT_NAMES', '*')
-
     if not api_key:
         print("[ERROR] GEMINI_API_KEY が設定されていません。")
         print(".envファイルを確認してください。")
         sys.exit(1)
-
-    if not projects_folder_id:
-        print("[ERROR] PROJECTS_FOLDER_ID が設定されていません。")
-        print(".envファイルを確認してください。")
-        sys.exit(1)
-
-    # OAuth認証（Google Drive用）
-    print("[INFO] OAuth認証中...")
-    creds = authenticate()
-    print("[INFO] OAuth認証完了")
-
-    # Google Driveサービス取得
-    service = get_drive_service(creds)
 
     # Geminiクライアント初期化
     print("[INFO] Gemini APIクライアント初期化中...")
     gemini_client = initialize_gemini_client()
     print("[INFO] Gemini APIクライアント初期化完了")
 
-    # 案件フォルダ一覧取得
-    print(f"[INFO] 案件情報フォルダ: /案件情報/ (ID: {projects_folder_id})")
-    all_projects = list_project_folders(service, projects_folder_id)
+    # プロジェクト一覧を取得
+    target_projects = []
 
-    # フィルタリング
-    target_projects = filter_projects(all_projects, project_names)
+    # ProjectConfigを使用
+    if ProjectConfig:
+        project_config = ProjectConfig(args.config)
+        if project_config.is_config_loaded():
+            print(f"[INFO] 設定ファイル読込完了: {project_config}")
+
+            # プロジェクト一覧を取得
+            if args.project:
+                if project_config.has_project(args.project):
+                    project_names_list = [args.project]
+                else:
+                    print(f"[ERROR] プロジェクト '{args.project}' が設定ファイルに見つかりません")
+                    sys.exit(1)
+            else:
+                project_names_list = project_config.get_projects()
+
+            # プロジェクト情報を構築
+            for project_name in project_names_list:
+                target_projects.append({'name': project_name, 'id': None})
+        else:
+            print("[ERROR] 設定ファイルが見つかりません。project_config.yamlを作成してください。")
+            print("詳細は project_config.yaml.sample を参照してください。")
+            sys.exit(1)
+    else:
+        print("[ERROR] ProjectConfigモジュールが見つかりません。")
+        sys.exit(1)
 
     if not target_projects:
         print("[WARN] 処理対象の案件が見つかりませんでした。")

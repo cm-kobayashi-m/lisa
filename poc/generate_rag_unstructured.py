@@ -33,6 +33,7 @@ from typing import List, Dict, Optional, Tuple, Any
 from datetime import datetime
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from func_timeout import func_timeout, FunctionTimedOut
 from tqdm import tqdm
 from pathlib import Path
 
@@ -70,6 +71,9 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 # RAGモジュール
 from rag.vector_store import S3VectorStore, Document
 from rag.embeddings import GeminiEmbeddings
+
+# プロジェクト設定
+from project_config import ProjectConfig
 
 # 定数
 SCOPES = ["https://www.googleapis.com/auth/drive"]
@@ -110,6 +114,9 @@ AWS_REGION = os.getenv("AWS_REGION", "us-west-2")
 
 # 環境変数読み込み
 load_dotenv()
+
+# ファイル処理のタイムアウト設定（秒）
+PARTITION_TIMEOUT = int(os.getenv("PARTITION_TIMEOUT", 60*10))  # デフォルト10分
 
 
 class FileCache:
@@ -229,7 +236,8 @@ def list_files_in_folder(service, folder_id: str) -> List[Dict[str, str]]:
     all_files = []
 
     # 処理対象のMIMEタイプ
-    target_mime_types = [
+    target_mime_types\
+        = [
         "application/pdf",
         "application/vnd.google-apps.document",
         "application/vnd.google-apps.spreadsheet",
@@ -355,10 +363,24 @@ class OptimizedChunker:
                 print("    [SKIP] ファイルを読み込めませんでした")
                 return []
 
-            # unstructuredでElements抽出（最適化版）
-            elements = self._partition_elements_optimized(
-                tmp_path, mime_type, file_name
-            )
+            # unstructuredでElements抽出（タイムアウト付き）
+            print(f"    [処理] ファイルを解析中... (タイムアウト: {PARTITION_TIMEOUT}秒)")
+
+            try:
+                # func_timeoutでタイムアウト付き実行
+                elements = func_timeout(
+                    PARTITION_TIMEOUT,
+                    self._partition_elements_optimized,
+                    args=(tmp_path, mime_type, file_name)
+                )
+            except FunctionTimedOut:
+                print(f"    [WARN] ファイルの処理がタイムアウトしました ({PARTITION_TIMEOUT}秒)。")
+                print(f"           ファイル名: {file_name}")
+                print(f"           処理をスキップして次のファイルを処理します。")
+                elements = []
+            except Exception as e:
+                print(f"    [ERROR] ファイル処理エラー: {e}")
+                elements = []
 
             # 一時ファイル削除
             try:
@@ -379,6 +401,11 @@ class OptimizedChunker:
                     chunk["metadata"]["modified_at"] = file_info["modifiedTime"]
                 if "createdTime" in file_info:
                     chunk["metadata"]["created_at"] = file_info["createdTime"]
+                # データソース情報を追加
+                if "data_source" in file_info:
+                    chunk["metadata"]["data_source"] = file_info["data_source"]
+                if "folder_id" in file_info:
+                    chunk["metadata"]["source_id"] = file_info["folder_id"]
 
             print(f"    {len(chunks)}個のチャンクを生成")
 
@@ -904,12 +931,14 @@ def main():
     print("  - バッチ処理（埋め込み・S3保存）")
     print("  - キャッシュ機構（処理済みスキップ）")
     print("  - 一時ファイル活用（メモリ削減）")
+    print("  - マルチデータソース対応（Google Drive複数フォルダ）")
     print()
 
     # コマンドライン引数
     parser = argparse.ArgumentParser(description="最適化版 RAG ベクトルDB構築")
     parser.add_argument("--project", type=str, help="特定のプロジェクトのみ処理")
     parser.add_argument("--clear-cache", action="store_true", help="キャッシュをクリア")
+    parser.add_argument("--config", type=str, default="project_config.yaml", help="設定ファイルのパス")
     args = parser.parse_args()
 
     # キャッシュ初期化
@@ -921,16 +950,12 @@ def main():
 
     # 環境変数チェック
     api_key = os.getenv("GEMINI_API_KEY")
-    projects_folder_id = os.getenv("PROJECTS_FOLDER_ID")
-    project_names = os.getenv("PROJECT_NAMES", "*")
-
     if not api_key:
         print("[ERROR] GEMINI_API_KEY が設定されていません")
         sys.exit(1)
 
-    if not projects_folder_id:
-        print("[ERROR] PROJECTS_FOLDER_ID が設定されていません")
-        sys.exit(1)
+    # プロジェクト設定を読み込み
+    project_config = ProjectConfig(args.config)
 
     # 認証
     print("[INFO] OAuth認証中...")
@@ -944,18 +969,37 @@ def main():
     chunker = OptimizedChunker(vector_db.embeddings, file_cache)
     print("[INFO] 初期化完了")
 
-    # プロジェクト一覧取得
-    all_projects = list_project_folders(service, projects_folder_id)
+    # プロジェクト一覧を取得
+    target_projects = []
 
-    # フィルタリング
-    if args.project:
-        target_projects = [p for p in all_projects if p["name"] == args.project]
-    else:
-        if project_names != "*":
-            target_names = [name.strip() for name in project_names.split(",")]
-            target_projects = [p for p in all_projects if p["name"] in target_names]
+    # 設定ファイルモード
+    if project_config.is_config_loaded():
+        print(f"[INFO] 設定ファイル読込完了: {project_config}")
+
+        # プロジェクト一覧を取得
+        if args.project:
+            if project_config.has_project(args.project):
+                project_names = [args.project]
+            else:
+                print(f"[ERROR] プロジェクト '{args.project}' が設定ファイルに見つかりません")
+                sys.exit(1)
         else:
-            target_projects = all_projects
+            project_names = project_config.get_projects()
+
+        # 各プロジェクトのGoogle Driveフォルダを取得
+        for project_name in project_names:
+            folders = project_config.get_google_drive_folders(project_name)
+            if folders:
+                target_projects.append({
+                    "name": project_name,
+                    "folders": folders
+                })
+            else:
+                print(f"[WARN] プロジェクト '{project_name}' にGoogle Driveフォルダが設定されていません")
+    else:
+        print("[ERROR] 設定ファイルが見つかりません。project_config.yamlを作成してください。")
+        print("詳細は project_config.yaml.sample を参照してください。")
+        sys.exit(1)
 
     if not target_projects:
         print("[WARN] 処理対象のプロジェクトが見つかりませんでした")
@@ -972,20 +1016,30 @@ def main():
 
     for project in target_projects:
         project_name = project["name"]
-        project_id = project["id"]
+        project_folders = project["folders"]
 
         print(f"\n{'=' * 50}")
         print(f"プロジェクト: {project_name}")
+        print(f"Google Driveフォルダ数: {len(project_folders)}")
         print(f"{'=' * 50}")
 
-        # ファイル一覧取得
-        files = list_files_in_folder(service, project_id)
-        print(f"[INFO] {len(files)}個のファイルを発見")
+        # 全フォルダからファイル一覧を取得
+        all_files = []
+        for folder_id in project_folders:
+            print(f"[INFO] フォルダ {folder_id} をスキャン中...")
+            files = list_files_in_folder(service, folder_id)
+            # メタデータにdata_sourceを追加
+            for file_info in files:
+                file_info["data_source"] = "google_drive"
+                file_info["folder_id"] = folder_id
+            all_files.extend(files)
+
+        print(f"[INFO] 合計 {len(all_files)}個のファイルを発見")
 
         project_chunks = 0
 
         # 並列処理でファイルを処理
-        print(f"\n[INFO] 並列処理開始: {len(files)}ファイル, {MAX_WORKERS}ワーカー")
+        print(f"\n[INFO] 並列処理開始: {len(all_files)}ファイル, {MAX_WORKERS}ワーカー")
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             future_to_file = {
                 executor.submit(
@@ -996,14 +1050,14 @@ def main():
                     file_info,
                     project_name,
                 ): file_info
-                for file_info in files
+                for file_info in all_files
             }
 
             print(f"\n[INFO] {len(future_to_file)}個のタスクを投入しました")
 
             progress_bar = tqdm(
                 as_completed(future_to_file),
-                total=len(files),
+                total=len(all_files),
                 desc=f"Processing {project_name}",
             )
             completed_count = 0
@@ -1011,7 +1065,7 @@ def main():
                 file_info = future_to_file[future]
                 completed_count += 1
                 print(
-                    f"\n[INFO] タスク完了 ({completed_count}/{len(files)}): {file_info['name']}"
+                    f"\n[INFO] タスク完了 ({completed_count}/{len(all_files)}): {file_info['name']}"
                 )
                 try:
                     result = future.result()

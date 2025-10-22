@@ -1,18 +1,25 @@
-# LISA PoC - リフレクションノート自動生成
+# LISA PoC - AI駆動型プロジェクト分析システム
 
-Google Driveの「案件情報」フォルダから各案件のファイルを取得し、Gemini APIを使用してリフレクションノートを自動生成するPoCスクリプトです。
+プロジェクトのドキュメントをRAG (Retrieval-Augmented Generation) とGemini APIを使用して分析し、インサイトやリフレクションノートを自動生成するシステムです。
 
-## 機能
+## 主要機能
 
-- Google Drive OAuth 2.0認証
-- `/案件情報/` 配下の案件フォルダを自動検出
-- 環境変数で処理対象案件を指定 (`*`で全案件、カンマ区切りで個別指定)
-- 対応ファイル形式:
-  - Google Docs, Slides, Sheets
-  - PDF
-  - MS Word (.docx), Excel (.xlsx), PowerPoint (.pptx)
-- Gemini APIによるリフレクションノート生成
-- 各案件ごとに `outputs/{案件名}/reflection_note.md` を出力
+### RAG（Retrieval-Augmented Generation）機能
+- AWS S3 Vectors を使用した高速ベクトル検索
+- プロジェクト横断での類似情報検索
+- 時系列重み付けによる最新情報の優先
+- キャッシュ機能による高速化
+
+### マルチデータソース対応
+- 複数のGoogle Driveフォルダからデータ取得
+- 将来的にSlack、Backlogのデータソースにも対応予定
+- YAMLベースの柔軟なプロジェクト設定
+
+### 対応ファイル形式
+- Google Docs, Slides, Sheets
+- PDF
+- MS Word (.docx), Excel (.xlsx), PowerPoint (.pptx)
+- テキストファイル、Markdownファイル
 
 ## セットアップ
 
@@ -43,56 +50,75 @@ cp .env.example .env
 vi .env
 ```
 
-`.env` の内容:
+主要な環境変数:
 
 ```bash
-# Gemini API Key (https://aistudio.google.com/app/apikey から取得)
+# Gemini API Key (必須)
 GEMINI_API_KEY=your-gemini-api-key-here
 
-# 処理対象の案件 (カンマ区切り、*で全案件)
-PROJECT_NAMES=*
+# AWS設定 (S3 Vectors使用時に必須)
+AWS_REGION=us-west-2
+VECTOR_BUCKET_NAME=lisa-poc-vectors
+VECTOR_INDEX_NAME=project-documents
 
-# 案件情報フォルダのID (Google DriveのURLから取得)
-# https://drive.google.com/drive/folders/XXXXXXXXXX ← この部分
-PROJECTS_FOLDER_ID=your-projects-folder-id
+# RAG検索設定 (オプション)
+RAG_MIN_SCORE=0.6
+RAG_SCORING_METHOD=hybrid
+RAG_TIME_WEIGHT=0.2
 ```
 
-### 4. Google DriveフォルダID取得方法
+### 4. プロジェクト設定ファイルの作成
 
-1. Google Driveで「案件情報」フォルダを開く
+```bash
+# サンプルファイルをコピー
+cp project_config.yaml.sample project_config.yaml
+
+# 設定ファイルを編集
+vi project_config.yaml
+```
+
+`project_config.yaml` の例:
+
+```yaml
+projects:
+  プロジェクトA:
+    google_drive:
+      - "フォルダID1"  # プロジェクトAのメインフォルダ
+      - "フォルダID2"  # プロジェクトAの追加資料フォルダ
+
+  プロジェクトB:
+    google_drive:
+      - "フォルダID3"
+```
+
+Google DriveフォルダIDの取得方法:
+1. Google Driveでフォルダを開く
 2. URLから `folders/` 以降の部分をコピー
    ```
    https://drive.google.com/drive/folders/1a2b3c4d5e6f7g8h9i
                                             ↑ この部分
    ```
-3. `.env` の `PROJECTS_FOLDER_ID` に貼り付け
 
 ## 使用方法
 
-### 基本実行
+### 1. RAGインデックスの構築（初回および更新時）
 
 ```bash
-python generate_note.py
+# 全プロジェクトのインデックスを構築
+python generate_rag_unstructured.py
+
+# 特定のプロジェクトのみ
+python generate_rag_unstructured.py --project "プロジェクトA"
 ```
 
-### 実行例
+### 2. リフレクションノートの生成
 
-#### 全案件を処理
 ```bash
-# .envで設定
-PROJECT_NAMES=*
+# プロジェクトとタスクを指定して実行
+python generate_note.py --project "プロジェクトA" --task "機能追加の検討"
 
-# 実行
-python generate_note.py
-```
-
-#### 特定の案件のみ処理
-```bash
-# .envで設定
-PROJECT_NAMES=案件A,案件B,案件C
-
-# 実行
-python generate_note.py
+# RAG専用モードで実行（より多くの文書を検索）
+python generate_note.py --project "プロジェクトA" --task "機能追加の検討" --rag-only
 ```
 
 ### 初回実行時
@@ -160,9 +186,18 @@ Google Cloud Consoleから `credentials.json` をダウンロードし、`lisa/p
 
 `.env` ファイルに `GEMINI_API_KEY` を設定してください。APIキーは [Google AI Studio](https://aistudio.google.com/app/apikey) から取得できます。
 
-### `PROJECTS_FOLDER_ID が設定されていません`
+### `project_config.yaml が見つかりません`
 
-`.env` ファイルに `PROJECTS_FOLDER_ID` (案件情報フォルダのID) を設定してください。
+`project_config.yaml.sample` をコピーして `project_config.yaml` を作成し、プロジェクト設定を記述してください。
+
+### ファイルの処理が終わらない
+
+大きなファイル（Excel、PDF、Word等）で処理が長時間かかる場合は、タイムアウト設定を調整してください。詳細は [FILE_TIMEOUT_GUIDE.md](FILE_TIMEOUT_GUIDE.md) を参照してください。
+
+```bash
+# .envファイルで設定（デフォルト: 300秒）
+PARTITION_TIMEOUT=600
+```
 
 ### 認証エラー (`token.pickle`)
 
@@ -183,7 +218,18 @@ python generate_note.py
 
 このPoCで実現可能性を検証後、以下の機能拡張を検討:
 
+### 短期計画
+- Slackデータソースの統合
+- Backlogデータソースの統合
+- Web UIの開発
+
+### 中期計画
 - Phase 2: 人間の確認・追加入力フロー
 - Phase 3: 完全自動化 (Analyze Engine)
 - API化 (FastAPI統合)
 - マルチテナント対応
+
+### 長期計画
+- 他のベクトルDBへの対応（Pinecone、Qdrant等）
+- ファインチューニング済みモデルの活用
+- エンタープライズ向け機能（監査ログ、権限管理等）
