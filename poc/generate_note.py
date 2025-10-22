@@ -374,9 +374,9 @@ def generate_final_reflection_note(client: genai.Client, project_name: str) -> t
         print(f"[INFO] RAG専用モード: プロジェクト名から検索クエリを生成")
 
         # k値を動的に決定（RAG専用モードの大きな値を使用）
-        base_k_current = int(os.getenv('RAG_ONLY_MODE_K_CURRENT', '15'))
-        base_k_similar = int(os.getenv('RAG_ONLY_MODE_K_SIMILAR', '15'))
-        max_total = int(os.getenv('RAG_ONLY_MODE_MAX_TOTAL', '30'))
+        base_k_current = int(os.getenv('RAG_ONLY_MODE_K_CURRENT', '30'))
+        base_k_similar = int(os.getenv('RAG_ONLY_MODE_K_SIMILAR', '30'))
+        max_total = int(os.getenv('RAG_ONLY_MODE_MAX_TOTAL', '60'))
 
         k_current, k_similar = calculate_dynamic_k(
             base_k_current=base_k_current,
@@ -417,6 +417,7 @@ def generate_final_reflection_note(client: genai.Client, project_name: str) -> t
         similar_project_results = []
         if k_similar > 0:
             similar_project_results = retriever.get_cross_project_insights(
+                # todo: プロジェクト名の検索では不足
                 query=all_text[:1000]+"の参考になるプロジェクト情報がほしい",
                 exclude_project=project_name,
                 k=k_similar
