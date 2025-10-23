@@ -408,6 +408,498 @@ def adjust_max_chars_for_context(
 
 
 @retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type(GeminiQuotaError)
+)
+def analyze_reflection_note(
+    client: genai.Client,
+    reflection_note: str,
+    project_name: str
+) -> Dict[str, str]:
+    """
+    生成されたリフレクションノートを分析して、
+    より精度の高い検索用の情報を抽出
+
+    Args:
+        client: Gemini APIクライアント
+        reflection_note: 初回生成されたリフレクションノート
+        project_name: プロジェクト名
+
+    Returns:
+        {
+            "refined_keywords": "抽出された具体的なキーワード",
+            "project_characteristics": "プロジェクトの本質的特徴",
+            "technical_stack": "使用技術の詳細",
+            "domain_context": "業界・ドメインの文脈",
+            "key_challenges": "主要な課題",
+            "success_factors": "成功要因"
+        }
+    """
+    prompt = f"""以下のリフレクションノートを分析し、プロジェクトの本質的な特徴を抽出してください。
+
+【プロジェクト名】
+{project_name}
+
+【リフレクションノート】
+{reflection_note}
+
+【抽出する情報】
+1. プロジェクトの具体的な技術要素（使用したツール、フレームワーク、サービス、技術名）
+2. 業界特有の用語や文脈（業界名、ドメイン、ビジネス領域）
+3. プロジェクトが解決した具体的な課題（課題の種類、解決アプローチ）
+4. 成功の鍵となった要因（成功パターン、効果的だった手法）
+5. 類似プロジェクトを探すための特徴的なキーワード（プロジェクトタイプ、規模、複雑さ）
+
+【出力形式】
+以下のJSON形式で出力してください（説明文やコードフェンス不要）：
+{{
+    "refined_keywords": "具体的なキーワード（スペース区切り、50文字以内）",
+    "project_characteristics": "プロジェクトの本質的特徴（100文字以内）",
+    "technical_stack": "使用技術の詳細（50文字以内）",
+    "domain_context": "業界・ドメインの文脈（50文字以内）",
+    "key_challenges": "主要な課題（50文字以内）",
+    "success_factors": "成功要因（50文字以内）"
+}}"""
+
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+
+    try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=prompt
+        )
+
+        # レスポンステキストを取得
+        response_text = response.text.strip()
+
+        # コードフェンスがあれば除去
+        json_str = response_text
+        if '```json' in response_text:
+            start = response_text.find('```json') + 7
+            end = response_text.find('```', start)
+            json_str = response_text[start:end].strip()
+        elif response_text.startswith('```') and response_text.count('```') >= 2:
+            start = response_text.find('```') + 3
+            end = response_text.find('```', start)
+            json_str = response_text[start:end].strip()
+
+        # JSONパース
+        import json
+        result = json.loads(json_str)
+
+        print(f"[INFO] ノート分析完了: {result.get('refined_keywords', '')[:50]}...")
+        return result
+
+    except json.JSONDecodeError as e:
+        print(f"[WARN] JSON解析エラー、フォールバック: {e}")
+        # フォールバック: プロジェクト名を返す
+        return {
+            "refined_keywords": project_name,
+            "project_characteristics": "",
+            "technical_stack": "",
+            "domain_context": "",
+            "key_challenges": "",
+            "success_factors": ""
+        }
+    except Exception as e:
+        if _is_quota_error(e):
+            raise GeminiQuotaError(str(e))
+        else:
+            print(f"[WARN] ノート分析エラー: {e}")
+            return {
+                "refined_keywords": project_name,
+                "project_characteristics": "",
+                "technical_stack": "",
+                "domain_context": "",
+                "key_challenges": "",
+                "success_factors": ""
+            }
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type(GeminiQuotaError)
+)
+def generate_refined_search_queries(
+    client: genai.Client,
+    analysis_result: Dict[str, str],
+    project_name: str
+) -> tuple[str, str]:
+    """
+    分析結果から改善された検索クエリを生成
+
+    Args:
+        client: Gemini APIクライアント
+        analysis_result: analyze_reflection_note()の結果
+        project_name: プロジェクト名
+
+    Returns:
+        (refined_current_query, refined_similar_query)
+    """
+    # 分析結果から検索クエリを構築
+    refined_keywords = analysis_result.get("refined_keywords", "")
+    technical_stack = analysis_result.get("technical_stack", "")
+    domain_context = analysis_result.get("domain_context", "")
+    key_challenges = analysis_result.get("key_challenges", "")
+
+    # 現在のプロジェクト検索クエリ（具体的なキーワードを優先）
+    current_query_parts = [refined_keywords, technical_stack, domain_context]
+    refined_current_query = " ".join([p for p in current_query_parts if p]).strip()
+
+    # 類似プロジェクト検索用のクエリ生成プロンプト
+    prompt = f"""以下の情報から、類似プロジェクトを検索するための最適なクエリを生成してください。
+
+【プロジェクト名】
+{project_name}
+
+【分析結果】
+- キーワード: {refined_keywords}
+- 技術スタック: {technical_stack}
+- ドメイン: {domain_context}
+- 課題: {key_challenges}
+- 成功要因: {analysis_result.get("success_factors", "")}
+
+【要件】
+- 現在のプロジェクト名「{project_name}」は除外してください
+- 同じ業界・技術・課題を持つプロジェクトを見つけるためのクエリを生成
+- 具体的で検索に適したキーワードフレーズ（50文字以内）
+
+【出力形式】
+検索クエリのみを出力（説明不要）"""
+
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+
+    try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=prompt
+        )
+        refined_similar_query = response.text.strip()
+        # 改行やタブをスペースに変換
+        refined_similar_query = ' '.join(refined_similar_query.split())[:100]
+
+        print(f"[INFO] 改善された検索クエリ生成:")
+        print(f"  - 現在のプロジェクト: {refined_current_query[:80]}...")
+        print(f"  - 類似プロジェクト: {refined_similar_query[:80]}...")
+
+        return refined_current_query, refined_similar_query
+
+    except Exception as e:
+        if _is_quota_error(e):
+            raise GeminiQuotaError(str(e))
+        else:
+            print(f"[WARN] 検索クエリ生成エラー: {e}")
+            # フォールバック
+            fallback_query = refined_current_query if refined_current_query else project_name
+            return refined_current_query, fallback_query
+
+
+def perform_refined_rag_search(
+    retriever,
+    project_name: str,
+    refined_current_query: str,
+    refined_similar_query: str,
+    distance_metric: str = 'cosine',
+    min_score: float = None
+) -> str:
+    """
+    改善された検索クエリでRAG検索を実行
+
+    Args:
+        retriever: RAGRetriever インスタンス
+        project_name: プロジェクト名
+        refined_current_query: 改善された現在のプロジェクト検索クエリ
+        refined_similar_query: 改善された類似プロジェクト検索クエリ
+        distance_metric: 距離メトリック
+        min_score: 最小スコア
+
+    Returns:
+        RAGコンテキスト（フォーマット済み）
+    """
+    if min_score is None:
+        min_score = float(os.getenv('RAG_ONLY_MODE_MIN_SCORE', '0.3'))
+
+    # k値を取得
+    k_current = int(os.getenv('RAG_REFINEMENT_K_CURRENT', '30'))
+    k_similar = int(os.getenv('RAG_REFINEMENT_K_SIMILAR', '30'))
+    max_total = int(os.getenv('RAG_REFINEMENT_MAX_TOTAL', '60'))
+
+    k_current, k_similar = calculate_dynamic_k(
+        base_k_current=k_current,
+        base_k_similar=k_similar,
+        max_total=max_total
+    )
+
+    print(f"[INFO] 再検索のk値: 現在={k_current}, 類似={k_similar}")
+
+    # 現在のプロジェクトを検索
+    current_results = []
+    if k_current > 0 and refined_current_query:
+        print(f"[INFO] 改善されたクエリで現在のプロジェクトを再検索中...")
+        current_results = retriever.search_similar_documents(
+            query=refined_current_query[:1000],
+            project_name=project_name,
+            k=k_current
+        )
+        current_results = filter_by_relevance_score(
+            current_results,
+            min_score=min_score,
+            metric=distance_metric
+        )
+        print(f"[INFO] 現在のプロジェクトから{len(current_results)}件取得（再検索）")
+
+    # k値調整
+    k_current_actual, k_similar = adjust_k_based_on_results(
+        k_current, k_similar, len(current_results)
+    )
+
+    # 類似プロジェクトを検索
+    similar_results = []
+    if k_similar > 0 and refined_similar_query:
+        print(f"[INFO] 改善されたクエリで類似プロジェクトを再検索中...")
+        similar_results = retriever.get_cross_project_insights(
+            query=refined_similar_query[:1000],
+            exclude_project=project_name,
+            k=k_similar
+        )
+        similar_results = filter_by_relevance_score(
+            similar_results,
+            min_score=min_score,
+            metric=distance_metric
+        )
+        print(f"[INFO] 類似プロジェクトから{len(similar_results)}件取得（再検索）")
+
+    # 重複排除
+    current_results, similar_results = deduplicate_results(
+        current_results,
+        similar_results
+    )
+    print(f"[INFO] 重複排除後: 現在={len(current_results)}, 類似={len(similar_results)}")
+
+    # コンテキストウィンドウに合わせて調整
+    max_chars_current, max_chars_similar = adjust_max_chars_for_context(
+        len(current_results),
+        len(similar_results)
+    )
+
+    # RAGコンテキストの構築
+    rag_context = ""
+    if current_results:
+        rag_context += "\n\n## 【現在のプロジェクトの過去情報（再検索）】\n\n"
+        rag_context += "改善されたクエリで再検索した結果です。\n"
+        rag_context += "より関連性の高い情報が含まれています。\n\n"
+        rag_context += retriever.format_context_for_prompt(
+            current_results,
+            max_chars=max_chars_current
+        )
+
+    if similar_results:
+        rag_context += "\n\n## 【類似プロジェクトからの参考情報（再検索）】\n\n"
+        rag_context += "改善されたクエリで再検索した類似プロジェクトです。\n"
+        rag_context += "より的確なパターンや知見が含まれています。\n\n"
+        rag_context += retriever.format_context_for_prompt(
+            similar_results,
+            max_chars=max_chars_similar
+        )
+
+    return rag_context
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type(GeminiQuotaError)
+)
+def regenerate_reflection_note(
+    client: genai.Client,
+    project_name: str,
+    refined_rag_context: str,
+    initial_note: str,
+    analysis_result: Dict[str, str]
+) -> str:
+    """
+    改善された情報を使ってリフレクションノートを再生成
+
+    Args:
+        client: Gemini APIクライアント
+        project_name: プロジェクト名
+        refined_rag_context: 改善されたRAG検索結果
+        initial_note: 初回生成されたノート
+        analysis_result: ノート分析結果
+
+    Returns:
+        再生成されたリフレクションノート
+    """
+    from improved_prompts import get_final_reflection_prompt
+
+    # 初回ノートの参考情報を追加
+    reference_section = f"""
+
+## 【初回生成ノートからの参考情報】
+
+以下は初回生成されたリフレクションノートです。
+この内容も参考にしながら、より精度の高いノートを生成してください。
+
+{initial_note[:3000]}
+"""
+
+    # 分析結果を追加
+    analysis_section = f"""
+
+## 【プロジェクト分析結果】
+
+初回ノートから抽出された重要情報：
+- 技術スタック: {analysis_result.get('technical_stack', '')}
+- ドメイン: {analysis_result.get('domain_context', '')}
+- 主要課題: {analysis_result.get('key_challenges', '')}
+- 成功要因: {analysis_result.get('success_factors', '')}
+"""
+
+    # コンテキストを統合
+    summaries_text = refined_rag_context + reference_section + analysis_section
+
+    # 改善版プロンプトを生成
+    prompt = get_final_reflection_prompt(
+        project_name=project_name,
+        summaries_text=summaries_text
+    )
+
+    # 再生成指示を追加
+    enhanced_prompt = f"""【重要】これは2回目の生成です。
+初回生成の内容と、改善された検索結果を統合して、より精度の高いリフレクションノートを作成してください。
+
+{prompt}"""
+
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+
+    try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=enhanced_prompt
+        )
+        print(f"[INFO] リフレクションノート再生成完了")
+        return response.text
+
+    except Exception as e:
+        if _is_quota_error(e):
+            raise GeminiQuotaError(str(e))
+        else:
+            print(f"[ERROR] 再生成エラー: {e}")
+            raise
+
+
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=1, max=60),
+    retry=retry_if_exception_type(GeminiQuotaError),
+    before_sleep=lambda retry_state: print(
+        f"[WARN] クォータ制限検出 (試行 {retry_state.attempt_number}/5)"
+        f" - {retry_state.next_action.sleep}秒待機してリトライします..."
+    )
+)
+def generate_final_reflection_note_v2(
+    client: genai.Client,
+    project_name: str,
+    enable_refinement: bool = None
+) -> tuple[str, str]:
+    """
+    改良版：初回生成 + 分析 + 再生成を行う
+
+    Args:
+        client: Gemini APIクライアント
+        project_name: プロジェクト名
+        enable_refinement: Trueの場合は再生成を実行、Falseの場合は1回のみ。
+                          Noneの場合は環境変数から取得
+
+    Returns:
+        (最終的なリフレクションノート, サマリーテキスト)
+    """
+    # === Phase 1: 初回生成（現状の処理） ===
+    print(f"[INFO] === Phase 1: 初回リフレクションノート生成 ===")
+    initial_note, initial_summaries = generate_final_reflection_note(
+        client, project_name
+    )
+
+    # 再生成フラグの決定
+    if enable_refinement is None:
+        enable_refinement = os.getenv('ENABLE_REFLECTION_REFINEMENT', 'true').lower() == 'true'
+
+    if not enable_refinement:
+        print(f"[INFO] 再生成はスキップされました（enable_refinement=False）")
+        return initial_note, initial_summaries
+
+    # === Phase 2: ノート分析と再生成 ===
+    print(f"\n[INFO] === Phase 2: ノート分析と精度向上 ===")
+
+    try:
+        # 1. ノートを分析
+        print(f"[INFO] ステップ1: 初回ノートを分析中...")
+        analysis_result = analyze_reflection_note(
+            client, initial_note, project_name
+        )
+
+        # 2. 改善された検索クエリを生成
+        print(f"[INFO] ステップ2: 改善された検索クエリを生成中...")
+        refined_current_query, refined_similar_query = generate_refined_search_queries(
+            client, analysis_result, project_name
+        )
+
+        # 3. 改善されたRAG検索を実行
+        print(f"[INFO] ステップ3: 改善されたクエリでRAG検索を実行中...")
+        from rag.rag_retriever import RAGRetriever
+        from rag.vector_store import S3VectorStore
+        from rag.embeddings import GeminiEmbeddings
+
+        # RAG初期化
+        api_key = os.getenv("GEMINI_API_KEY")
+        embeddings = GeminiEmbeddings(
+            api_key=api_key,
+            model_name=EMBEDDING_MODEL,
+            dimension=DIMENSION
+        )
+        vector_store = S3VectorStore(
+            vector_bucket_name=os.getenv('VECTOR_BUCKET_NAME', 'lisa-poc-vectors'),
+            index_name=os.getenv('VECTOR_INDEX_NAME', 'project-documents'),
+            dimension=DIMENSION,
+            region_name=os.getenv('AWS_REGION', 'us-west-2'),
+            create_if_not_exists=False
+        )
+        retriever = RAGRetriever(vector_store, embeddings)
+
+        distance_metric = os.getenv('VECTOR_DISTANCE_METRIC', 'cosine')
+
+        refined_rag_context = perform_refined_rag_search(
+            retriever,
+            project_name,
+            refined_current_query,
+            refined_similar_query,
+            distance_metric=distance_metric
+        )
+
+        # 4. リフレクションノートを再生成
+        print(f"[INFO] ステップ4: 改善された情報でリフレクションノートを再生成中...")
+        final_note = regenerate_reflection_note(
+            client,
+            project_name,
+            refined_rag_context,
+            initial_note,
+            analysis_result
+        )
+
+        print(f"[INFO] === Phase 2 完了: 精度向上されたノートを生成 ===")
+        return final_note, refined_rag_context
+
+    except Exception as e:
+        print(f"[WARN] Phase 2でエラーが発生、初回ノートを返します: {e}")
+        import traceback
+        traceback.print_exc()
+        # エラーが発生した場合は初回生成のノートを返す
+        return initial_note, initial_summaries
+
+
+@retry(
     stop=stop_after_attempt(5),
     wait=wait_exponential(multiplier=1, min=1, max=60),
     retry=retry_if_exception_type(GeminiQuotaError),
@@ -956,9 +1448,9 @@ def process_project_only_rag(client: genai.Client, project: Dict[str, str]) -> b
     print(f"\n[INFO] === {project_name} の処理開始（RAG専用モード） ===")
 
     try:
-        # 最終的なリフレクションノート生成（RAG専用）
+        # 最終的なリフレクションノート生成（RAG専用 + 再生成）
         print(f"\n[INFO] === RAGからリフレクションノート生成中 ===")
-        reflection_note, summaries_text = generate_final_reflection_note(
+        reflection_note, summaries_text = generate_final_reflection_note_v2(
             client,
             project_name
         )

@@ -42,8 +42,3 @@ projects:
     google_drive:
       - "17JFBa7uLGUzCjhckdpPmFpbYkavTnzSQ"
 
-  # データソースの一部のみ使用する例
-  金融リスク管理:
-    google_drive:
-      - "folder_id_finance"
-    # slackやbacklogは指定しない場合は省略可能

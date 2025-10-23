@@ -140,6 +140,12 @@ RAG_ONLY_MODE_K_CURRENT=15         # 現在のプロジェクトから取得
 RAG_ONLY_MODE_K_SIMILAR=15         # 類似プロジェクトから取得
 RAG_ONLY_MODE_MAX_TOTAL=30         # 合計最大件数
 RAG_ONLY_MODE_MIN_SCORE=0.3        # RAG専用モード時の最小スコア
+
+# リフレクションノート再生成機能（精度向上）
+ENABLE_REFLECTION_REFINEMENT=true  # 再生成を有効化（true/false）
+RAG_REFINEMENT_K_CURRENT=20        # 再検索時：現在のプロジェクトから取得
+RAG_REFINEMENT_K_SIMILAR=20        # 再検索時：類似プロジェクトから取得
+RAG_REFINEMENT_MAX_TOTAL=40        # 再検索時：合計最大件数
 ```
 
 ### 4. プロジェクト設定ファイルの作成
@@ -195,17 +201,33 @@ python3 generate_rag_unstructured.py --verbose
 ### 2. リフレクションノートの生成
 
 ```bash
-# 基本的な使用方法
+# 基本的な使用方法（再生成機能を有効化）
 python3 generate_note.py
 
-# プロジェクトとタスクを指定
-python3 generate_note.py --project "プロジェクトA" --task "機能追加の検討"
+# 特定のプロジェクトのみ処理
+python3 generate_note.py --project "プロジェクトA"
+```
 
-# RAG専用モードで実行（より多くの文書を検索）
-python3 generate_note.py --project "プロジェクトA" --task "機能追加の検討" --rag-only
+#### リフレクションノート生成の仕組み
 
-# 検索件数を指定
-python3 generate_note.py --project "プロジェクトA" --k-current 10 --k-similar 10
+デフォルトでは **2段階生成プロセス** により、精度の高いリフレクションノートを生成します：
+
+**Phase 1: 初回生成**
+1. プロジェクト名から拡張キーワードを生成
+2. RAG検索で過去プロジェクト情報を取得
+3. 初回リフレクションノートを生成
+
+**Phase 2: 分析と再生成**（`ENABLE_REFLECTION_REFINEMENT=true`の場合）
+1. 初回ノートを分析し、具体的な技術要素・課題・成功要因を抽出
+2. 抽出した情報で改善された検索クエリを生成
+3. より関連性の高い過去プロジェクト情報を再検索
+4. 初回ノートと新しい情報を統合して、精度の高いノートを再生成
+
+**再生成機能の制御**:
+```bash
+# 環境変数で制御（デフォルト: 有効）
+ENABLE_REFLECTION_REFINEMENT=true   # 再生成を有効化
+ENABLE_REFLECTION_REFINEMENT=false  # 再生成を無効化（1回のみ生成）
 ```
 
 ### 3. S3 Vectorsの管理

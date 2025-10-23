@@ -659,6 +659,8 @@ class OptimizedChunker:
                 # チャンク作成
                 for sub_idx, sub_text in enumerate(sub_texts):
                     # カテゴリを取得
+                    # TODO: カテゴリはpartitionしたカテゴリではなく
+                    #  ドキュメントの種類（RFP、提案書、ヒアリリングドキュメント、基本設計書、アーキテクチャ設計書、見積もり書、セキュリティチェックシート）にする
                     categories = set()
                     if hasattr(tc, "category"):
                         categories.add(tc.category)
