@@ -150,6 +150,37 @@ class ProjectConfig:
 
         return value
 
+    def get_classification_categories(self) -> List[str]:
+        """
+        LLM分類用のドキュメントカテゴリリストを取得
+
+        Returns:
+            カテゴリ名のリスト（優先順位順）
+        """
+        return self.get_option('classification_categories', [])
+
+    def get_category_description(self, category: str) -> str:
+        """
+        特定カテゴリの説明を取得
+
+        Args:
+            category: カテゴリ名
+
+        Returns:
+            カテゴリの説明文（LLMプロンプト用）
+        """
+        descriptions = self.get_option('category_descriptions', {})
+        return descriptions.get(category, "")
+
+    def get_all_category_descriptions(self) -> Dict[str, str]:
+        """
+        全カテゴリの説明を取得
+
+        Returns:
+            カテゴリ名と説明文の辞書
+        """
+        return self.get_option('category_descriptions', {})
+
     def is_config_loaded(self) -> bool:
         """設定ファイルが正常に読み込まれたか確認"""
         return bool(self.config_path and self.config)
@@ -264,3 +295,15 @@ if __name__ == "__main__":
 
     # オプション設定の取得例
     print(f"\nGoogle Drive最大ファイルサイズ: {config.get_option('google_drive.max_file_size', 30)}MB")
+
+    # カテゴリ設定のテスト
+    print("\n[カテゴリ設定テスト]")
+    categories = config.get_classification_categories()
+    print(f"登録カテゴリ数: {len(categories)}")
+    print(f"カテゴリ一覧: {', '.join(categories[:5])}... (他 {len(categories) - 5} カテゴリ)")
+
+    # カテゴリ説明の取得テスト
+    print("\n[カテゴリ説明サンプル]")
+    for cat in ["RFP", "ヒアリングシート", "提案書"]:
+        desc = config.get_category_description(cat)
+        print(f"  {cat}: {desc}")

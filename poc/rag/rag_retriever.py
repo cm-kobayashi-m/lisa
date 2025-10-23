@@ -31,6 +31,69 @@ class RAGRetriever:
         self.vector_store = vector_store
         self.embeddings = embeddings
 
+    def search_by_category(
+        self,
+        query: str,
+        category: str,
+        project_name: Optional[str] = None,
+        k: int = 5
+    ) -> List[Tuple[Document, float]]:
+        """
+        ドキュメント種別でフィルタした類似度検索
+
+        Args:
+            query: 検索クエリ
+            category: ドキュメント種別（例: "提案書", "ヒアリングシート"）
+            project_name: プロジェクト名でフィルタ（オプション）
+            k: 返す結果数（デフォルト: 5）
+
+        Returns:
+            (Document, 類似度スコア)のタプルのリスト
+
+        Example:
+            # ヒアリングシートのみを検索
+            results = retriever.search_by_category(
+                query="顧客要件",
+                category="ヒアリングシート",
+                k=10
+            )
+
+            # 特定プロジェクトの提案書のみを検索
+            results = retriever.search_by_category(
+                query="システム構成",
+                category="提案書",
+                project_name="ヤーマン",
+                k=10
+            )
+        """
+        try:
+            # クエリをベクトル化
+            logger.info(f"クエリをベクトル化中: {query[:100]}...")
+            query_vector = self.embeddings.embed_query(query)
+
+            # 追加フィルタ条件の構築
+            additional_filters = None
+            if project_name:
+                additional_filters = {"project_name": {"$eq": project_name}}
+                logger.info(f"プロジェクト名でフィルタ: {project_name}")
+
+            # カテゴリフィルタ付き検索
+            logger.info(f"カテゴリフィルタ付き検索を実行: {category}（k={k}）")
+            results = self.vector_store.search_by_category(
+                query_vector=query_vector,
+                category=category,
+                k=k,
+                additional_filters=additional_filters
+            )
+
+            logger.info(f"検索完了: {len(results)}件の結果を取得")
+            return results
+
+        except Exception as e:
+            logger.error(f"カテゴリフィルタ検索でエラーが発生: {e}")
+            # エラーが発生した場合は空のリストを返す
+            return []
+
     def search_similar_documents(
         self, query: str, project_name: Optional[str] = None, k: int = 5
     ) -> List[Tuple[Document, float]]:
@@ -40,11 +103,13 @@ class RAGRetriever:
         Args:
             query: 検索クエリ
             project_name: プロジェクト名でフィルタ（オプション）
-            file_name: ファイル名でフィルタ（オプション）
             k: 返す結果数（デフォルト: 5）
 
         Returns:
             (Document, 類似度スコア)のタプルのリスト
+
+        Note:
+            既存コードとの互換性のため、カテゴリフィルタなしで全ドキュメントを対象とします
         """
         try:
             # クエリをベクトル化

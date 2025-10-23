@@ -239,6 +239,9 @@ class S3VectorStore:
                     "created_at": doc.metadata.get("created_at", ""),
                     "modified_at": doc.metadata.get("modified_at", ""),
                     "doc_type": doc.metadata.get("doc_type", "document"),
+                    # ドキュメント種別（LLM判定）
+                    "document_type": doc.metadata.get("document_type", ""),
+                    "document_type_confidence": doc.metadata.get("document_type_confidence", 0.0),
                     "source_text": doc.text[:40000]  # 40KB制限内に収める
                 }
 
@@ -269,6 +272,60 @@ class S3VectorStore:
 
         return added_count
 
+    def search_by_category(
+        self,
+        query_vector: List[float],
+        category: str,
+        k: int = 5,
+        additional_filters: Optional[Dict[str, Any]] = None
+    ) -> List[Tuple[Document, float]]:
+        """
+        ドキュメント種別でフィルタした類似度検索
+
+        Args:
+            query_vector: クエリベクトル
+            category: ドキュメント種別（例: "提案書", "ヒアリングシート"）
+            k: 返す結果の数（最大30）
+            additional_filters: 追加のフィルタ条件（例: {"project_name": {"$eq": "プロジェクトA"}}）
+
+        Returns:
+            (Document, 距離)のタプルのリスト
+
+        Example:
+            # ヒアリングシートのみを検索
+            results = store.search_by_category(
+                query_vector=vector,
+                category="ヒアリングシート",
+                k=10
+            )
+
+            # 特定プロジェクトの提案書のみを検索
+            results = store.search_by_category(
+                query_vector=vector,
+                category="提案書",
+                k=10,
+                additional_filters={"project_name": {"$eq": "ヤーマン"}}
+            )
+        """
+        # カテゴリフィルタを構築
+        filter_dict = {"document_type": {"$eq": category}}
+
+        # 追加のフィルタがある場合はマージ
+        if additional_filters:
+            # $andで結合
+            filter_dict = {
+                "$and": [
+                    {"document_type": {"$eq": category}},
+                    additional_filters
+                ]
+            }
+
+        return self.similarity_search(
+            query_vector=query_vector,
+            k=k,
+            filter_dict=filter_dict
+        )
+
     def similarity_search(
         self,
         query_vector: List[float],
@@ -282,9 +339,14 @@ class S3VectorStore:
             query_vector: クエリベクトル
             k: 返す結果の数（最大30）
             filter_dict: フィルタ条件（例: {"project_name": {"$eq": "プロジェクトA"}}）
+                        カテゴリフィルタ: {"document_type": {"$eq": "提案書"}}
+                        複数条件: {"$and": [{"document_type": {"$eq": "提案書"}}, {"project_name": {"$eq": "プロジェクトA"}}]}
 
         Returns:
             (Document, 距離)のタプルのリスト
+
+        Note:
+            既存コードとの互換性のため、filter_dictがNoneの場合は全ドキュメントを対象とします
         """
         if k > 30:
             logger.warning("kの値が30を超えています。30に制限します。")
@@ -322,7 +384,9 @@ class S3VectorStore:
                         "file_name": metadata.get("file_name", ""),
                         "created_at": metadata.get("created_at", ""),
                         "modified_at": metadata.get("modified_at", ""),
-                        "doc_type": metadata.get("doc_type", "document")
+                        "doc_type": metadata.get("doc_type", "document"),
+                        "document_type": metadata.get("document_type", ""),
+                        "document_type_confidence": metadata.get("document_type_confidence", 0.0)
                     }
                 )
 

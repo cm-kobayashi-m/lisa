@@ -71,6 +71,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 # RAGモジュール
 from rag.vector_store import S3VectorStore, Document
 from rag.embeddings import GeminiEmbeddings
+from rag.document_classifier import DocumentClassifier
 
 # プロジェクト設定
 from project_config import ProjectConfig
@@ -288,9 +289,15 @@ def list_files_in_folder(service, folder_id: str) -> List[Dict[str, str]]:
 class OptimizedChunker:
     """最適化されたチャンク化処理（Phase 1改善）"""
 
-    def __init__(self, embeddings: GeminiEmbeddings, file_cache: FileCache):
+    def __init__(
+        self,
+        embeddings: GeminiEmbeddings,
+        file_cache: FileCache,
+        classifier: DocumentClassifier
+    ):
         self.embeddings = embeddings
         self.file_cache = file_cache
+        self.classifier = classifier
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=800,
             chunk_overlap=120,
@@ -331,40 +338,43 @@ class OptimizedChunker:
         mime_type = file_info["mimeType"]
         modified_time = file_info.get("modifiedTime", "")
 
-        print("\n  ========================================")
-        print(f"  処理中: {file_name}")
-        print("  ========================================")
+        # ファイル名プレフィックスをログに追加
+        log_prefix = f"[{file_name}]"
+
+        print(f"\n  ========================================")
+        print(f"  {log_prefix} 処理中")
+        print(f"  ========================================")
 
         # キャッシュチェック（Phase 1改善）
         if self.file_cache.is_processed(file_id, modified_time):
-            print(f"    [SKIP] 処理済み（キャッシュヒット）: {file_name}")
+            print(f"    {log_prefix} [SKIP] 処理済み（キャッシュヒット）")
             return []
 
         # ファイルサイズチェック
         file_size = int(file_info.get("size", 0))
         print(
-            f"    [情報] ファイルサイズ: {file_size / 1024:.1f}KB, MIMEタイプ: {mime_type}"
+            f"    {log_prefix} [情報] ファイルサイズ: {file_size / 1024:.1f}KB, MIMEタイプ: {mime_type}"
         )
 
         if file_size > MAX_FILE_SIZE * 1024 * 1024:
             print(
-                f"    [SKIP] ファイルサイズが大きすぎます: {file_size / 1024 / 1024:.1f}MB"
+                f"    {log_prefix} [SKIP] ファイルサイズが大きすぎます: {file_size / 1024 / 1024:.1f}MB"
             )
             return []
 
         try:
             # ファイルをダウンロード（一時ファイルへ）
-            print("    [開始] ダウンロード処理を開始...")
+            print(f"    {log_prefix} [開始] ダウンロード処理を開始...")
             tmp_path = self._download_to_tempfile(
                 service, file_id, file_name, mime_type
             )
 
             if not tmp_path:
-                print("    [SKIP] ファイルを読み込めませんでした")
+                print(f"    {log_prefix} [SKIP] ファイルを読み込めませんでした")
                 return []
 
             # unstructuredでElements抽出（タイムアウト付き）
-            print(f"    [処理] ファイルを解析中... (タイムアウト: {PARTITION_TIMEOUT}秒)")
+            print(f"    {log_prefix} [処理] ファイルを解析中... (タイムアウト: {PARTITION_TIMEOUT}秒)")
 
             try:
                 # func_timeoutでタイムアウト付き実行
@@ -374,12 +384,11 @@ class OptimizedChunker:
                     args=(tmp_path, mime_type, file_name)
                 )
             except FunctionTimedOut:
-                print(f"    [WARN] ファイルの処理がタイムアウトしました ({PARTITION_TIMEOUT}秒)。")
-                print(f"           ファイル名: {file_name}")
-                print(f"           処理をスキップして次のファイルを処理します。")
+                print(f"    {log_prefix} [WARN] ファイルの処理がタイムアウトしました ({PARTITION_TIMEOUT}秒)")
+                print(f"    {log_prefix}        処理をスキップして次のファイルを処理します")
                 elements = []
             except Exception as e:
-                print(f"    [ERROR] ファイル処理エラー: {e}")
+                print(f"    {log_prefix} [ERROR] ファイル処理エラー: {e}")
                 elements = []
 
             # 一時ファイル削除
@@ -389,7 +398,7 @@ class OptimizedChunker:
                 pass
 
             if not elements:
-                print("    [SKIP] コンテンツを抽出できませんでした")
+                print(f"    {log_prefix} [SKIP] コンテンツを抽出できませんでした")
                 return []
 
             # 構造的なチャンク化
@@ -407,7 +416,7 @@ class OptimizedChunker:
                 if "folder_id" in file_info:
                     chunk["metadata"]["source_id"] = file_info["folder_id"]
 
-            print(f"    {len(chunks)}個のチャンクを生成")
+            print(f"    {log_prefix} {len(chunks)}個のチャンクを生成")
 
             # キャッシュに記録
             self.file_cache.mark_processed(file_id, modified_time, len(chunks))
@@ -415,14 +424,15 @@ class OptimizedChunker:
             return chunks
 
         except Exception as e:
-            print(f"    [ERROR] 処理エラー: {e}")
-            print(f"    [DEBUG] エラー詳細: {traceback.format_exc()}")
+            print(f"    {log_prefix} [ERROR] 処理エラー: {e}")
+            print(f"    {log_prefix} [DEBUG] エラー詳細: {traceback.format_exc()}")
             return []
 
     def _download_to_tempfile(
         self, service, file_id: str, file_name: str, mime_type: str
     ) -> Optional[str]:
         """ファイルを一時ファイルにダウンロード（Phase 1改善）"""
+        log_prefix = f"[{file_name}]"
         try:
             # 一時ファイル作成
             suffix = os.path.splitext(file_name)[1] or ".tmp"
@@ -431,28 +441,28 @@ class OptimizedChunker:
 
                 # Google Docs → DOCX
                 if mime_type == "application/vnd.google-apps.document":
-                    print("    [ダウンロード] Google DocsをDOCX形式でエクスポート中...")
+                    print(f"    {log_prefix} [ダウンロード] Google DocsをDOCX形式でエクスポート中...")
                     request = service.files().export_media(
                         fileId=file_id,
                         mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     )
                 # Google Sheets → XLSX
                 elif mime_type == "application/vnd.google-apps.spreadsheet":
-                    print("    [ダウンロード] Google SheetsをXLSX形式でエクスポート中...")
+                    print(f"    {log_prefix} [ダウンロード] Google SheetsをXLSX形式でエクスポート中...")
                     request = service.files().export_media(
                         fileId=file_id,
                         mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
                 # Google Slides → PPTX
                 elif mime_type == "application/vnd.google-apps.presentation":
-                    print("    [ダウンロード] Google SlidesをPPTX形式でエクスポート中...")
+                    print(f"    {log_prefix} [ダウンロード] Google SlidesをPPTX形式でエクスポート中...")
                     request = service.files().export_media(
                         fileId=file_id,
                         mimeType="application/vnd.openxmlformats-officedocument.presentationml.presentation",
                     )
                 # その他のファイル
                 else:
-                    print("    [ダウンロード] ファイルダウンロード中...")
+                    print(f"    {log_prefix} [ダウンロード] ファイルダウンロード中...")
                     request = service.files().get_media(fileId=file_id)
 
                 # ダウンロード実行（直接ファイルに書き込み）
@@ -462,18 +472,19 @@ class OptimizedChunker:
                     status, done = downloader.next_chunk()
 
                 file_size = os.path.getsize(tmp_path)
-                print(f"    [ダウンロード] 完了 ({file_size / 1024 / 1024:.2f}MB)")
+                print(f"    {log_prefix} [ダウンロード] 完了 ({file_size / 1024 / 1024:.2f}MB)")
 
                 return tmp_path
 
         except Exception as e:
-            print(f"    [ERROR] ダウンロードエラー: {e}")
+            print(f"    {log_prefix} [ERROR] ダウンロードエラー: {e}")
             return None
 
     def _partition_elements_optimized(
         self, file_path: str, mime_type: str, file_name: str
     ) -> List[Any]:
         """ファイル形式に応じたpartition処理（最適化版）"""
+        log_prefix = f"[{file_name}]"
         try:
             # PDF（Phase 1: 戦略最適化）
             if mime_type == "application/pdf":
@@ -481,7 +492,7 @@ class OptimizedChunker:
                 has_text = self.check_pdf_has_text(file_path)
 
                 if has_text:
-                    print("    [処理] PDFを解析中 (fast戦略 - テキストあり)...")
+                    print(f"    {log_prefix} [処理] PDFを解析中 (fast戦略 - テキストあり)...")
                     # テキストがあるPDFは高速処理
                     elements = partition_pdf(
                         filename=file_path,
@@ -491,7 +502,7 @@ class OptimizedChunker:
                         metadata_filename=file_name
                     )
                 else:
-                    print("    [処理] PDFを解析中 (auto戦略 - スキャンPDF疑い)...")
+                    print(f"    {log_prefix} [処理] PDFを解析中 (auto戦略 - スキャンPDF疑い)...")
                     # スキャンPDFの可能性がある場合
                     elements = partition_pdf(
                         filename=file_path,
@@ -504,43 +515,43 @@ class OptimizedChunker:
 
             # MS Word / Google Docs (DOCX形式)
             elif mime_type in OFFICE_WORD_MIMES or mime_type == "application/vnd.google-apps.document":
-                print("    [処理] Word/Docsドキュメントを解析中...")
+                print(f"    {log_prefix} [処理] Word/Docsドキュメントを解析中...")
                 return partition_docx(filename=file_path, metadata_filename=file_name)
 
             # MS Excel / Google Sheets (XLSX形式)
             elif mime_type in OFFICE_EXCEL_MIMES or mime_type == "application/vnd.google-apps.spreadsheet":
-                print("    [処理] Excel/Sheetsスプレッドシートを解析中...")
+                print(f"    {log_prefix} [処理] Excel/Sheetsスプレッドシートを解析中...")
                 return partition_xlsx(filename=file_path, metadata_filename=file_name)
 
             # MS PowerPoint / Google Slides (PPTX形式)
             elif mime_type in OFFICE_PPT_MIMES or mime_type == "application/vnd.google-apps.presentation":
-                print("    [処理] PowerPoint/Slidesプレゼンテーションを解析中...")
+                print(f"    {log_prefix} [処理] PowerPoint/Slidesプレゼンテーションを解析中...")
                 return partition_pptx(filename=file_path, metadata_filename=file_name)
 
             # Markdown
             elif mime_type in ["text/markdown", "text/x-markdown"]:
-                print("    [処理] Markdownドキュメントを解析中...")
+                print(f"    {log_prefix} [処理] Markdownドキュメントを解析中...")
                 return partition_md(filename=file_path, metadata_filename=file_name)
 
             # プレーンテキスト
             elif mime_type.startswith("text/"):
-                print("    [処理] テキストドキュメントを解析中...")
+                print(f"    {log_prefix} [処理] テキストドキュメントを解析中...")
                 return partition_text(filename=file_path, metadata_filename=file_name)
 
             # 画像（Gemini LLMでOCR処理）
             elif mime_type in ["image/png", "image/jpeg", "image/jpg"]:
-                print("    [処理] 画像ファイルをGemini LLMでOCR処理中...")
+                print(f"    {log_prefix} [処理] 画像ファイルをGemini LLMでOCR処理中...")
                 with open(file_path, 'rb') as f:
                     file_bytes = f.read()
                 return self._process_image_with_gemini(file_bytes, mime_type, file_name)
 
             else:
-                print(f"    [WARN] 未対応のMIMEタイプ: {mime_type}")
+                print(f"    {log_prefix} [WARN] 未対応のMIMEタイプ: {mime_type}")
                 return []
 
         except Exception as e:
-            print(f"    [ERROR] Elements抽出エラー: {e}")
-            print(f"    [DEBUG] {traceback.format_exc()}")
+            print(f"    {log_prefix} [ERROR] Elements抽出エラー: {e}")
+            print(f"    {log_prefix} [DEBUG] {traceback.format_exc()}")
             return []
 
     def _process_image_with_gemini(
@@ -625,8 +636,18 @@ class OptimizedChunker:
         self, elements: List[Any], project_name: str, file_name: str
     ) -> List[Dict]:
         """Elementsを構造的にチャンク化"""
+        log_prefix = f"[{file_name}]"
         try:
-            print(f"    [処理] {len(elements)}個のElementsをチャンク化中...")
+            print(f"    {log_prefix} [処理] {len(elements)}個のElementsをチャンク化中...")
+
+            # ドキュメント分類（1ファイルにつき1回のLLM呼び出し）
+            print(f"    {log_prefix} [分類] ドキュメント種別を判定中...")
+            document_type, confidence = self.classifier.classify_from_elements(
+                elements=elements,
+                file_name=file_name,
+                max_elements=10  # 先頭10要素から判定
+            )
+            print(f"    {log_prefix} [分類] 判定結果: {document_type} (信頼度: {confidence:.2f})")
 
             # chunk_by_titleで論理単位にグループ化
             title_chunks = chunk_by_title(
@@ -658,12 +679,10 @@ class OptimizedChunker:
 
                 # チャンク作成
                 for sub_idx, sub_text in enumerate(sub_texts):
-                    # カテゴリを取得
-                    # TODO: カテゴリはpartitionしたカテゴリではなく
-                    #  ドキュメントの種類（RFP、提案書、ヒアリリングドキュメント、基本設計書、アーキテクチャ設計書、見積もり書、セキュリティチェックシート）にする
-                    categories = set()
+                    # Element種別を取得（Title, Text等）
+                    element_types = set()
                     if hasattr(tc, "category"):
-                        categories.add(tc.category)
+                        element_types.add(tc.category)
 
                     # ページを取得
                     pages = set()
@@ -687,7 +706,11 @@ class OptimizedChunker:
                                 "title": title.strip()
                                 if title
                                 else f"Section {idx + 1}",
-                                "categories": list(categories) if categories else [],
+                                # ドキュメント種別（LLM判定）
+                                "document_type": document_type,
+                                "document_type_confidence": confidence,
+                                # Element種別（unstructured判定）
+                                "element_types": list(element_types) if element_types else [],
                                 "pages": sorted(list(pages)) if pages else [],
                                 "importance": "medium",
                             },
@@ -697,8 +720,9 @@ class OptimizedChunker:
             return chunks
 
         except Exception as e:
-            print(f"    [ERROR] チャンク化エラー: {e}")
-            print(f"    [DEBUG] {traceback.format_exc()}")
+            log_prefix = f"[{file_name}]"
+            print(f"    {log_prefix} [ERROR] チャンク化エラー: {e}")
+            print(f"    {log_prefix} [DEBUG] {traceback.format_exc()}")
             # フォールバック：単純な分割
             return self._simple_chunk(elements, project_name, file_name)
 
@@ -706,7 +730,17 @@ class OptimizedChunker:
         self, elements: List[Any], project_name: str, file_name: str
     ) -> List[Dict]:
         """フォールバック用の単純なチャンク分割"""
+        log_prefix = f"[{file_name}]"
         try:
+            # ドキュメント分類（フォールバック時も実行）
+            print(f"    {log_prefix} [分類] ドキュメント種別を判定中（フォールバック）...")
+            document_type, confidence = self.classifier.classify_from_elements(
+                elements=elements,
+                file_name=file_name,
+                max_elements=10
+            )
+            print(f"    {log_prefix} [分類] 判定結果: {document_type} (信頼度: {confidence:.2f})")
+
             # Elementsからテキストを抽出
             all_text = []
             for element in elements:
@@ -732,7 +766,10 @@ class OptimizedChunker:
                             "file_name": file_name,
                             "chunk_index": idx,
                             "title": f"Chunk {idx + 1}",
-                            "categories": [],
+                            # ドキュメント種別
+                            "document_type": document_type,
+                            "document_type_confidence": confidence,
+                            "element_types": [],
                             "pages": [],
                             "importance": "medium",
                         },
@@ -741,7 +778,7 @@ class OptimizedChunker:
 
             return chunks
         except Exception as e:
-            print(f"    [ERROR] フォールバックチャンク化エラー: {e}")
+            print(f"    {log_prefix} [ERROR] フォールバックチャンク化エラー: {e}")
             return []
 
 
@@ -780,7 +817,8 @@ class OptimizedVectorDBBuilder:
         if not chunks:
             return 0
 
-        print(f"    [処理] {len(chunks)}個のチャンクをバッファに追加...")
+        log_prefix = f"[{file_name}]"
+        print(f"    {log_prefix} [処理] {len(chunks)}個のチャンクをバッファに追加...")
 
         for chunk_info in chunks:
             self.chunk_buffer.append({
@@ -891,9 +929,11 @@ def _process_single_file_optimized(
     import threading
 
     thread_id = threading.current_thread().name
+    file_name = file_info['name']
+    log_prefix = f"[Thread-{thread_id}][{file_name}]"
 
     try:
-        print(f"[Thread-{thread_id}] ファイル処理開始: {file_info['name']}")
+        print(f"{log_prefix} ファイル処理開始")
 
         # 各スレッド内で独自のserviceオブジェクトを生成
         service = build("drive", "v3", credentials=creds)
@@ -904,22 +944,20 @@ def _process_single_file_optimized(
         if chunks:
             # バッファに追加（バッチ処理）
             added = vector_db.save_chunks_batch(chunks, file_info["name"])
-            print(f"    ✓ チャンクをバッファに追加")
-            print("  ======================================== \n")
+            print(f"    {log_prefix} ✓ チャンクをバッファに追加")
+            print(f"  {log_prefix} ======================================== \n")
             return len(chunks)  # チャンク数を返す
 
-        print("  ======================================== \n")
+        print(f"  {log_prefix} ======================================== \n")
         return 0
 
     except Exception as e:
-        print(
-            f"[Thread-{thread_id}] [ERROR] '{file_info['name']}' の処理中にエラーが発生: {e}"
-        )
-        print("  ======================================== \n")
-        print(f"[Thread-{thread_id}] エラー詳細:\n{traceback.format_exc()}")
+        print(f"{log_prefix} [ERROR] 処理中にエラーが発生: {e}")
+        print(f"  {log_prefix} ======================================== \n")
+        print(f"{log_prefix} エラー詳細:\n{traceback.format_exc()}")
         return None
     finally:
-        print(f"[Thread-{thread_id}] ファイル処理終了: {file_info['name']}")
+        print(f"{log_prefix} ファイル処理終了")
 
 
 def main():
@@ -968,7 +1006,16 @@ def main():
     # 処理コンポーネント初期化
     print("[INFO] 処理コンポーネント初期化中...")
     vector_db = OptimizedVectorDBBuilder()
-    chunker = OptimizedChunker(vector_db.embeddings, file_cache)
+
+    # ドキュメント分類器初期化
+    print("[INFO] ドキュメント分類器を初期化中...")
+    classifier = DocumentClassifier(
+        api_key=api_key,
+        project_config=project_config
+    )
+    print(f"[INFO] 分類器初期化完了（カテゴリ数: {len(classifier.categories)}）")
+
+    chunker = OptimizedChunker(vector_db.embeddings, file_cache, classifier)
     print("[INFO] 初期化完了")
 
     # プロジェクト一覧を取得

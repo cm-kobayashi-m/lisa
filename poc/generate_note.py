@@ -45,9 +45,15 @@ class GeminiQuotaError(Exception):
 
 
 def _is_quota_error(exception: Exception) -> bool:
-    """クォータエラーかどうかを判定"""
+    """クォータエラーかどうかを判定（429、503、overloadedエラーを含む）"""
     error_msg = str(exception)
-    return '429' in error_msg or 'quota' in error_msg.lower()
+    return (
+        '429' in error_msg
+        or '503' in error_msg
+        or 'quota' in error_msg.lower()
+        or 'overloaded' in error_msg.lower()
+        or 'UNAVAILABLE' in error_msg
+    )
 
 
 def initialize_gemini_client() -> genai.Client:
