@@ -124,6 +124,104 @@ def generate_project_keywords(client: genai.Client, project_name: str) -> str:
     wait=wait_exponential(multiplier=1, min=1, max=10),
     retry=retry_if_exception_type(GeminiQuotaError)
 )
+def generate_multiple_queries(
+    client: genai.Client,
+    project_name: str,
+    base_context: str = "",
+    num_queries: int = None
+) -> List[str]:
+    """
+    RAG-Fusion用：同じ意図を持つ複数の異なるクエリを生成
+
+    同じ情報を探すが、異なる表現・観点のクエリを生成することで、
+    検索のカバレッジを向上させる。
+
+    Args:
+        client: Gemini APIクライアント
+        project_name: プロジェクト名
+        base_context: プロジェクトの基本情報（オプション）
+        num_queries: 生成するクエリ数（Noneの場合は環境変数から取得）
+
+    Returns:
+        生成されたクエリのリスト
+    """
+    if num_queries is None:
+        num_queries = int(os.getenv('RAG_FUSION_NUM_QUERIES', '3'))
+
+    prompt = f"""プロジェクト名「{project_name}」に関連する情報を検索するため、
+異なる観点から{num_queries}つの検索クエリを生成してください。
+
+【プロジェクト情報】
+{base_context if base_context else "（基本情報なし）"}
+
+【要件】
+- 同じ情報を探すが、異なる表現・観点のクエリにする
+- 以下の観点で多様化する：
+  1. 業界用語 vs 一般用語
+  2. 技術スタック vs ビジネス価値
+  3. 課題領域 vs 解決手段
+  4. プロジェクト規模 vs 実装詳細
+- 各クエリは50文字以内
+- 検索に適した具体的なキーワードを含める
+
+【出力形式】
+クエリ1: （検索クエリ）
+クエリ2: （検索クエリ）
+クエリ3: （検索クエリ）
+
+説明文は不要、各行1つのクエリのみを出力してください。"""
+
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+
+    try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=prompt
+        )
+
+        # クエリを抽出
+        queries = []
+        for line in response.text.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            # "クエリN:" のプレフィックスを除去
+            if ':' in line:
+                query = line.split(':', 1)[1].strip()
+            else:
+                query = line
+
+            # 長すぎるクエリは短縮
+            if len(query) > 100:
+                query = query[:100]
+
+            queries.append(query)
+
+        # 目標数に達していない場合はプロジェクト名を追加
+        while len(queries) < num_queries:
+            queries.append(project_name)
+
+        queries = queries[:num_queries]
+        print(f"[INFO] RAG-Fusion: {len(queries)}個のクエリを生成")
+        for i, q in enumerate(queries, 1):
+            print(f"  クエリ{i}: {q[:60]}...")
+
+        return queries
+
+    except Exception as e:
+        if _is_quota_error(e):
+            raise GeminiQuotaError(str(e))
+        else:
+            print(f"[WARN] 複数クエリ生成に失敗、フォールバック: {e}")
+            # フォールバック: プロジェクト名を複数返す
+            return [project_name] * num_queries
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type(GeminiQuotaError)
+)
 def generate_project_summary(client: genai.Client, project_name: str, current_results: List[Tuple]) -> str:
     """現在のプロジェクトの情報から概要を生成
 
@@ -250,6 +348,125 @@ def normalize_score(distance: float, metric: str = 'cosine') -> float:
         raise ValueError(f"Unsupported metric: {metric}")
 
 
+def reciprocal_rank_fusion(
+    results_list: List[List[Tuple]],
+    k: int = 60
+) -> List[Tuple]:
+    """
+    Reciprocal Rank Fusion (RRF) で複数の検索結果をマージ
+
+    RAG-Fusionの核心アルゴリズム。複数のクエリによる検索結果を統合し、
+    ランク（順位）を考慮した最適なドキュメントリストを生成する。
+
+    RRFスコア = Σ(1 / (k + rank_i))
+
+    Args:
+        results_list: 複数の検索結果リスト [[結果1], [結果2], ...]
+        k: RRFパラメータ（デフォルト: 60）
+
+    Returns:
+        RRFスコアでソートされた統合結果
+    """
+    # ドキュメントIDごとにRRFスコアを計算
+    rrf_scores = {}
+
+    for query_idx, results in enumerate(results_list):
+        for rank, (doc, distance) in enumerate(results, start=1):
+            doc_id = doc.key
+            if doc_id not in rrf_scores:
+                rrf_scores[doc_id] = {
+                    'doc': doc,
+                    'distance': distance,
+                    'rrf_score': 0.0,
+                    'appearances': 0,
+                    'ranks': []
+                }
+            # RRFスコアを累積
+            rrf_scores[doc_id]['rrf_score'] += 1.0 / (k + rank)
+            rrf_scores[doc_id]['appearances'] += 1
+            rrf_scores[doc_id]['ranks'].append((query_idx, rank))
+
+    # RRFスコアでソート
+    ranked_results = sorted(
+        rrf_scores.values(),
+        key=lambda x: x['rrf_score'],
+        reverse=True
+    )
+
+    print(f"[INFO] RRF: {len(results_list)}個のクエリ結果から{len(ranked_results)}件のユニークなドキュメントを統合")
+
+    return [(item['doc'], item['distance']) for item in ranked_results]
+
+
+def apply_hybrid_scoring(
+    results: List[Tuple],
+    scoring_method: str = 'hybrid',
+    time_weight: float = 0.2,
+    decay_days: int = 90,
+    metric: str = 'cosine'
+) -> List[Tuple]:
+    """
+    ハイブリッドスコアリング: 類似度 + 時系列重み付け
+
+    環境変数で設定された重み付けロジックを適用し、
+    コサイン類似度と時間的新しさを統合したスコアを計算する。
+
+    Args:
+        results: 検索結果 [(Document, distance), ...]
+        scoring_method: スコアリング方式
+            - 'hybrid': 類似度と時間スコアを重み付け統合
+            - 'time_decay': 類似度に時間減衰を乗算
+            - 'reranking': 類似度で検索後、時間でソート
+            - 'none': 類似度のみ
+        time_weight: 時間スコアの重み (0.0-1.0)
+        decay_days: 時間減衰の半減期（日数）
+        metric: 距離メトリック
+
+    Returns:
+        スコアリング後の結果（ソート済み）
+    """
+    from datetime import datetime
+    import math
+
+    scored_results = []
+
+    for doc, distance in results:
+        # 類似度スコア
+        similarity = normalize_score(distance, metric)
+
+        # 時系列スコア
+        time_score = 0.5  # デフォルト
+        if hasattr(doc, 'metadata') and doc.metadata and 'created_at' in doc.metadata:
+            try:
+                created_at_str = doc.metadata['created_at']
+                if isinstance(created_at_str, str):
+                    # ISO形式の日付文字列をパース
+                    created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                    days_old = (datetime.now() - created_at.replace(tzinfo=None)).days
+                    # 指数減衰: e^(-days / decay_days)
+                    time_score = math.exp(-days_old / decay_days)
+            except Exception as e:
+                print(f"[WARN] 時刻解析エラー: {e}")
+
+        # ハイブリッドスコア計算
+        if scoring_method == 'hybrid':
+            final_score = (1 - time_weight) * similarity + time_weight * time_score
+        elif scoring_method == 'time_decay':
+            final_score = similarity * time_score
+        elif scoring_method == 'reranking':
+            # 類似度で検索後、時間でソート
+            final_score = time_score
+        else:  # 'none'
+            final_score = similarity
+
+        scored_results.append((doc, distance, final_score))
+
+    # final_scoreでソート
+    scored_results.sort(key=lambda x: x[2], reverse=True)
+
+    return [(doc, dist) for doc, dist, _ in scored_results]
+
+
 def calculate_dynamic_k(
     base_k_current: int = 5,
     base_k_similar: int = 8,
@@ -334,6 +551,159 @@ def filter_by_relevance_score(
             filtered.append((doc, distance))  # 元の距離を保持
 
     return filtered
+
+
+def multi_query_search(
+    retriever,
+    queries: List[str],
+    project_name: str,
+    k: int,
+    min_score: float = None,
+    metric: str = 'cosine',
+    use_rrf: bool = True
+) -> List[Tuple]:
+    """
+    RAG-Fusion: 複数のクエリで並行検索し、RRFでマージ
+
+    複数の異なるクエリで検索を実行し、Reciprocal Rank Fusionで
+    結果を統合することで、検索のカバレッジと精度を向上させる。
+
+    Args:
+        retriever: RAGRetrieverインスタンス
+        queries: 検索クエリのリスト
+        project_name: プロジェクト名
+        k: 各クエリで取得する件数
+        min_score: 最小類似度スコア
+        metric: 距離メトリック
+        use_rrf: RRFを使用するか（Falseの場合は単純に連結）
+
+    Returns:
+        統合された検索結果（上位k件）
+    """
+    if not queries:
+        print("[WARN] クエリが空のため検索をスキップ")
+        return []
+
+    all_results = []
+
+    # 各クエリで並行検索
+    for i, query in enumerate(queries, 1):
+        print(f"[INFO] クエリ{i}/{len(queries)}で検索中: {query[:50]}...")
+        try:
+            results = retriever.search_similar_documents(
+                query=query[:1000],
+                project_name=project_name,
+                k=k * 2  # 多めに取得してRRFで絞る
+            )
+            # スコアフィルタリング
+            results = filter_by_relevance_score(results, min_score, metric)
+            all_results.append(results)
+            print(f"[INFO] クエリ{i}: {len(results)}件取得")
+        except Exception as e:
+            print(f"[WARN] クエリ{i}の検索でエラー: {e}")
+            all_results.append([])
+
+    # 結果の統合
+    if use_rrf and len(all_results) > 1:
+        # RRFでマージ
+        merged = reciprocal_rank_fusion(all_results, k=60)
+    else:
+        # 単純に連結（従来の方式）
+        merged = []
+        for results in all_results:
+            merged.extend(results)
+
+    # 重複除去（doc.keyベース）
+    seen_keys = set()
+    deduped = []
+    for doc, distance in merged:
+        if doc.key not in seen_keys:
+            seen_keys.add(doc.key)
+            deduped.append((doc, distance))
+
+    # 上位k件に絞る
+    return deduped[:k]
+
+
+def rag_fusion_search(
+    client: genai.Client,
+    retriever,
+    project_name: str,
+    base_query: str = None,
+    k: int = 10,
+    num_queries: int = None,
+    min_score: float = None,
+    apply_time_weighting: bool = True
+) -> List[Tuple]:
+    """
+    RAG-Fusion統合検索フロー
+
+    1. 複数のクエリを生成
+    2. 各クエリで並行検索
+    3. RRFでマージ
+    4. ハイブリッドスコアリング適用
+    5. 最小スコアでフィルタリング
+
+    Args:
+        client: Gemini APIクライアント
+        retriever: RAGRetrieverインスタンス
+        project_name: プロジェクト名
+        base_query: ベースとなるクエリ（Noneの場合はプロジェクト名）
+        k: 最終的に取得する件数
+        num_queries: 生成するクエリ数
+        min_score: 最小類似度スコア
+        apply_time_weighting: 時系列重み付けを適用するか
+
+    Returns:
+        最終的な検索結果
+    """
+    if base_query is None:
+        base_query = project_name
+
+    # 1. 複数のクエリを生成
+    print(f"[INFO] RAG-Fusion: クエリ生成中...")
+    try:
+        queries = generate_multiple_queries(
+            client,
+            project_name,
+            base_context=base_query,
+            num_queries=num_queries
+        )
+    except Exception as e:
+        print(f"[WARN] クエリ生成エラー、単一クエリで継続: {e}")
+        queries = [base_query]
+
+    # 2. 並行検索 + RRFマージ
+    print(f"[INFO] RAG-Fusion: 並行検索実行中...")
+    merged_results = multi_query_search(
+        retriever,
+        queries,
+        project_name,
+        k=k,
+        min_score=min_score,
+        use_rrf=True
+    )
+
+    # 3. ハイブリッドスコアリング適用
+    if apply_time_weighting:
+        print(f"[INFO] RAG-Fusion: ハイブリッドスコアリング適用中...")
+        scoring_method = os.getenv('RAG_SCORING_METHOD', 'hybrid')
+        time_weight = float(os.getenv('RAG_TIME_WEIGHT', '0.2'))
+        decay_days = int(os.getenv('RAG_DECAY_DAYS', '90'))
+        metric = os.getenv('VECTOR_DISTANCE_METRIC', 'cosine')
+
+        scored_results = apply_hybrid_scoring(
+            merged_results,
+            scoring_method=scoring_method,
+            time_weight=time_weight,
+            decay_days=decay_days,
+            metric=metric
+        )
+    else:
+        scored_results = merged_results
+
+    print(f"[INFO] RAG-Fusion: 最終結果 {len(scored_results)}件")
+    return scored_results[:k]
 
 
 def deduplicate_results(
@@ -976,69 +1346,161 @@ def generate_final_reflection_note(client: genai.Client, project_name: str) -> t
         min_score = float(os.getenv('RAG_ONLY_MODE_MIN_SCORE', '0.3'))
         print(f"[INFO] RAG専用モード: 最小類似度スコア={min_score}")
 
-        # ===== PHASE 2: 現在のプロジェクトの過去情報を検索（改善版） =====
-        current_project_results = []
-        if k_current > 0:
-            print(f"[INFO] 第1段階: 拡張キーワードで現在のプロジェクトを検索中...")
-            current_project_results = retriever.search_similar_documents(
-                query=search_query[:1000],  # 拡張キーワードで検索
+        # ===== RAG-Fusion有効化フラグ =====
+        use_rag_fusion = os.getenv('USE_RAG_FUSION', 'true').lower() == 'true'
+
+        if use_rag_fusion:
+            print(f"[INFO] === RAG-Fusion モード有効 ===")
+
+            # ===== PHASE 2: 現在のプロジェクトをRAG-Fusionで検索 =====
+            print(f"[INFO] Phase 2: 現在のプロジェクトをRAG-Fusion検索中...")
+            current_project_results = rag_fusion_search(
+                client=client,
+                retriever=retriever,
                 project_name=project_name,
-                k=k_current
-            )
-            # スコアフィルタリング
-            current_project_results = filter_by_relevance_score(
-                current_project_results,
+                base_query=search_query,
+                k=k_current,
+                num_queries=int(os.getenv('RAG_FUSION_NUM_QUERIES', '3')),
                 min_score=min_score,
-                metric=distance_metric
+                apply_time_weighting=True
             )
-            print(f"[INFO] 第1段階: 現在のプロジェクトから{len(current_project_results)}件取得（フィルタ後）")
+            print(f"[INFO] 現在のプロジェクトから{len(current_project_results)}件取得（RAG-Fusion）")
 
-        # 結果に基づいてk_similarを調整
-        k_current_actual, k_similar = adjust_k_based_on_results(
-            k_current, k_similar, len(current_project_results)
-        )
+            # ===== PHASE 3: 類似プロジェクトをRAG-Fusionで検索 =====
+            print(f"[INFO] Phase 3: 類似プロジェクトをRAG-Fusion検索中...")
 
-        # ===== PHASE 3: プロジェクト概要を生成 =====
-        project_summary = ""
-        if current_project_results:
-            print(f"[INFO] プロジェクト概要を生成中...")
+            # 現在のプロジェクト結果から概要を生成
+            project_summary = ""
+            if current_project_results:
+                try:
+                    project_summary = generate_project_summary(client, project_name, current_project_results)
+                except Exception as e:
+                    print(f"[WARN] プロジェクト概要生成に失敗: {e}")
+                    project_summary = search_query
+
+            # 類似プロジェクト用のベースクエリ生成
+            if project_summary:
+                try:
+                    similar_base_query = generate_similar_project_query(client, project_summary, project_name)
+                except Exception as e:
+                    print(f"[WARN] 類似検索クエリ生成に失敗: {e}")
+                    similar_base_query = project_summary[:100]
+            else:
+                similar_base_query = search_query
+
+            # 類似プロジェクトをRAG-Fusionで検索（get_cross_project_insightsのラッパー）
+            # 注: 類似プロジェクト検索では、現在のプロジェクトを除外する必要があるため、
+            # 専用の検索関数を使用
+            similar_queries = []
             try:
-                project_summary = generate_project_summary(client, project_name, current_project_results)
+                similar_queries = generate_multiple_queries(
+                    client,
+                    project_name,
+                    base_context=similar_base_query,
+                    num_queries=int(os.getenv('RAG_FUSION_NUM_QUERIES', '3'))
+                )
             except Exception as e:
-                print(f"[WARN] プロジェクト概要生成に失敗: {e}")
-                project_summary = search_query  # フォールバック
+                print(f"[WARN] 類似プロジェクト用クエリ生成エラー: {e}")
+                similar_queries = [similar_base_query]
 
-        # ===== PHASE 4: 類似プロジェクト検索用クエリを生成 =====
-        similar_search_query = ""
-        if project_summary:
-            print(f"[INFO] 類似プロジェクト検索用クエリを生成中...")
-            try:
-                similar_search_query = generate_similar_project_query(client, project_summary, project_name)
-            except Exception as e:
-                print(f"[WARN] 類似検索クエリ生成に失敗: {e}")
-                similar_search_query = project_summary[:100]  # フォールバック
-        else:
-            # プロジェクト概要がない場合は拡張キーワードを使用
-            similar_search_query = search_query
+            # 複数クエリで類似プロジェクト検索
+            similar_all_results = []
+            for i, query in enumerate(similar_queries, 1):
+                print(f"[INFO] 類似プロジェクトクエリ{i}/{len(similar_queries)}: {query[:50]}...")
+                try:
+                    results = retriever.get_cross_project_insights(
+                        query=query[:1000],
+                        exclude_project=project_name,
+                        k=k_similar * 2  # 多めに取得
+                    )
+                    results = filter_by_relevance_score(results, min_score, distance_metric)
+                    similar_all_results.append(results)
+                    print(f"[INFO] クエリ{i}: {len(results)}件取得")
+                except Exception as e:
+                    print(f"[WARN] クエリ{i}の検索でエラー: {e}")
+                    similar_all_results.append([])
 
-        # ===== PHASE 5: 類似プロジェクトの情報を検索（改善版） =====
-        similar_project_results = []
-        if k_similar > 0 and similar_search_query:
-            print(f"[INFO] 第2段階: 生成されたクエリで類似プロジェクトを検索中...")
-            similar_project_results = retriever.get_cross_project_insights(
-                query=similar_search_query[:1000],  # 生成されたクエリで検索
-                exclude_project=project_name,
-                k=k_similar
-            )
-            # スコアフィルタリング（第1段階と同じmin_scoreを使用）
-            similar_project_results = filter_by_relevance_score(
+            # RRFでマージ
+            if len(similar_all_results) > 1:
+                similar_project_results = reciprocal_rank_fusion(similar_all_results, k=60)
+            else:
+                similar_project_results = similar_all_results[0] if similar_all_results else []
+
+            # ハイブリッドスコアリング適用
+            similar_project_results = apply_hybrid_scoring(
                 similar_project_results,
-                min_score=min_score,
+                scoring_method=os.getenv('RAG_SCORING_METHOD', 'hybrid'),
+                time_weight=float(os.getenv('RAG_TIME_WEIGHT', '0.2')),
+                decay_days=int(os.getenv('RAG_DECAY_DAYS', '90')),
                 metric=distance_metric
             )
-            print(f"[INFO] 第2段階: 類似プロジェクトから{len(similar_project_results)}件取得（フィルタ後）")
 
-        # 重複排除
+            similar_project_results = similar_project_results[:k_similar]
+            print(f"[INFO] 類似プロジェクトから{len(similar_project_results)}件取得（RAG-Fusion）")
+
+        else:
+            print(f"[INFO] === 従来の2段階検索モード ===")
+
+            # ===== PHASE 2: 現在のプロジェクトの過去情報を検索（従来版） =====
+            current_project_results = []
+            if k_current > 0:
+                print(f"[INFO] 第1段階: 拡張キーワードで現在のプロジェクトを検索中...")
+                current_project_results = retriever.search_similar_documents(
+                    query=search_query[:1000],
+                    project_name=project_name,
+                    k=k_current
+                )
+                current_project_results = filter_by_relevance_score(
+                    current_project_results,
+                    min_score=min_score,
+                    metric=distance_metric
+                )
+                print(f"[INFO] 第1段階: 現在のプロジェクトから{len(current_project_results)}件取得（フィルタ後）")
+
+            # 結果に基づいてk_similarを調整
+            k_current_actual, k_similar = adjust_k_based_on_results(
+                k_current, k_similar, len(current_project_results)
+            )
+
+            # ===== PHASE 3: プロジェクト概要を生成 =====
+            project_summary = ""
+            if current_project_results:
+                print(f"[INFO] プロジェクト概要を生成中...")
+                try:
+                    project_summary = generate_project_summary(client, project_name, current_project_results)
+                except Exception as e:
+                    print(f"[WARN] プロジェクト概要生成に失敗: {e}")
+                    project_summary = search_query
+
+            # ===== PHASE 4: 類似プロジェクト検索用クエリを生成 =====
+            similar_search_query = ""
+            if project_summary:
+                print(f"[INFO] 類似プロジェクト検索用クエリを生成中...")
+                try:
+                    similar_search_query = generate_similar_project_query(client, project_summary, project_name)
+                except Exception as e:
+                    print(f"[WARN] 類似検索クエリ生成に失敗: {e}")
+                    similar_search_query = project_summary[:100]
+            else:
+                similar_search_query = search_query
+
+            # ===== PHASE 5: 類似プロジェクトの情報を検索（従来版） =====
+            similar_project_results = []
+            if k_similar > 0 and similar_search_query:
+                print(f"[INFO] 第2段階: 生成されたクエリで類似プロジェクトを検索中...")
+                similar_project_results = retriever.get_cross_project_insights(
+                    query=similar_search_query[:1000],
+                    exclude_project=project_name,
+                    k=k_similar
+                )
+                similar_project_results = filter_by_relevance_score(
+                    similar_project_results,
+                    min_score=min_score,
+                    metric=distance_metric
+                )
+                print(f"[INFO] 第2段階: 類似プロジェクトから{len(similar_project_results)}件取得（フィルタ後）")
+
+        # 重複排除（RAG-Fusionモード、従来モード共通）
         current_project_results, similar_project_results = deduplicate_results(
             current_project_results,
             similar_project_results
