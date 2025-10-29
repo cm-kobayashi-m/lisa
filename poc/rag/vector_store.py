@@ -232,17 +232,65 @@ class S3VectorStore:
                     logger.warning(f"ドキュメント '{doc.key}' にベクトルがありません")
                     continue
 
-                # メタデータの準備（フィルタブルとノンフィルタブルを分離）
+                # メタデータの準備（S3 Vectorsの10キー制限に対応）
+                import json
+
+                # フィルタ用の独立フィールド（3個）
                 metadata = {
                     "project_name": doc.metadata.get("project_name", ""),
                     "file_name": doc.metadata.get("file_name", ""),
-                    "created_at": doc.metadata.get("created_at", ""),
-                    "modified_at": doc.metadata.get("modified_at", ""),
-                    "doc_type": doc.metadata.get("doc_type", "document"),
-                    # ドキュメント種別（LLM判定）
                     "document_type": doc.metadata.get("document_type", ""),
-                    "document_type_confidence": doc.metadata.get("document_type_confidence", 0.0),
-                    "source_text": doc.text[:40000]  # 40KB制限内に収める
+
+                    # 基本情報をJSON化（4個目）
+                    "basic_info": json.dumps({
+                        "title": doc.metadata.get("title", ""),
+                        "chunk_index": doc.metadata.get("chunk_index", 0),
+                        "created_at": doc.metadata.get("created_at", ""),
+                        "modified_at": doc.metadata.get("modified_at", ""),
+                        "doc_type": doc.metadata.get("doc_type", "document"),
+                        "data_source": doc.metadata.get("data_source", ""),
+                        "source_id": doc.metadata.get("source_id", "")
+                    }, ensure_ascii=False),
+
+                    # 階層情報をJSON化（5個目）
+                    "hierarchy_info": json.dumps({
+                        "heading_level": doc.metadata.get("heading_level", 0),
+                        "section_path": doc.metadata.get("section_path", "")
+                    }, ensure_ascii=False),
+
+                    # 構造情報をJSON化（6個目）
+                    "structure_info": json.dumps({
+                        "has_table": doc.metadata.get("has_table", False),
+                        "has_list": doc.metadata.get("has_list", False),
+                        "has_code": doc.metadata.get("has_code", False),
+                        "has_numbers": doc.metadata.get("has_numbers", False)
+                    }, ensure_ascii=False),
+
+                    # 位置情報をJSON化（7個目）
+                    "position_info": json.dumps({
+                        "chunk_position": doc.metadata.get("chunk_position", ""),
+                        "relative_position": doc.metadata.get("relative_position", 0.0),
+                        "prev_section": doc.metadata.get("prev_section", ""),
+                        "next_section": doc.metadata.get("next_section", "")
+                    }, ensure_ascii=False),
+
+                    # 分析情報をJSON化（8個目）
+                    "analysis_info": json.dumps({
+                        "information_density": doc.metadata.get("information_density", 0.0),
+                        "importance": doc.metadata.get("importance", "medium"),
+                        "document_type_confidence": doc.metadata.get("document_type_confidence", 0.0)
+                    }, ensure_ascii=False),
+
+                    # リスト型データをJSON化（9個目）
+                    "list_data": json.dumps({
+                        "speakers": doc.metadata.get("speakers", []),
+                        "pages": doc.metadata.get("pages", []),
+                        "element_types": doc.metadata.get("element_types", []),
+                        "temporal_index": doc.metadata.get("temporal_index", 0)
+                    }, ensure_ascii=False),
+
+                    # テキスト内容（10個目、40KB制限内）
+                    "source_text": doc.text[:40000]
                 }
 
                 vectors.append({
@@ -375,18 +423,98 @@ class S3VectorStore:
             for vector_result in response.get("vectors", []):
                 metadata = vector_result.get("metadata", {})
 
-                # Documentオブジェクトを再構築
+                # Documentオブジェクトを再構築（グループ化されたメタデータを復元）
+                import json
+
+                # JSONグループを解析
+                basic_info = {}
+                hierarchy_info = {}
+                structure_info = {}
+                position_info = {}
+                analysis_info = {}
+                list_data = {}
+
+                # 基本情報のパース
+                try:
+                    basic_info = json.loads(metadata.get("basic_info", "{}"))
+                except (json.JSONDecodeError, TypeError):
+                    basic_info = {}
+
+                # 階層情報のパース
+                try:
+                    hierarchy_info = json.loads(metadata.get("hierarchy_info", "{}"))
+                except (json.JSONDecodeError, TypeError):
+                    hierarchy_info = {}
+
+                # 構造情報のパース
+                try:
+                    structure_info = json.loads(metadata.get("structure_info", "{}"))
+                except (json.JSONDecodeError, TypeError):
+                    structure_info = {}
+
+                # 位置情報のパース
+                try:
+                    position_info = json.loads(metadata.get("position_info", "{}"))
+                except (json.JSONDecodeError, TypeError):
+                    position_info = {}
+
+                # 分析情報のパース
+                try:
+                    analysis_info = json.loads(metadata.get("analysis_info", "{}"))
+                except (json.JSONDecodeError, TypeError):
+                    analysis_info = {}
+
+                # リスト型データのパース
+                try:
+                    list_data = json.loads(metadata.get("list_data", "{}"))
+                except (json.JSONDecodeError, TypeError):
+                    list_data = {}
+
+                # メタデータを再構築
                 doc = Document(
                     key=vector_result["key"],
                     text=metadata.get("source_text", ""),
                     metadata={
+                        # フィルタ用フィールド
                         "project_name": metadata.get("project_name", ""),
                         "file_name": metadata.get("file_name", ""),
-                        "created_at": metadata.get("created_at", ""),
-                        "modified_at": metadata.get("modified_at", ""),
-                        "doc_type": metadata.get("doc_type", "document"),
                         "document_type": metadata.get("document_type", ""),
-                        "document_type_confidence": metadata.get("document_type_confidence", 0.0)
+
+                        # 基本情報
+                        "title": basic_info.get("title", ""),
+                        "chunk_index": basic_info.get("chunk_index", 0),
+                        "created_at": basic_info.get("created_at", ""),
+                        "modified_at": basic_info.get("modified_at", ""),
+                        "doc_type": basic_info.get("doc_type", "document"),
+                        "data_source": basic_info.get("data_source", ""),
+                        "source_id": basic_info.get("source_id", ""),
+
+                        # 階層情報
+                        "heading_level": hierarchy_info.get("heading_level", 0),
+                        "section_path": hierarchy_info.get("section_path", ""),
+
+                        # 構造情報
+                        "has_table": structure_info.get("has_table", False),
+                        "has_list": structure_info.get("has_list", False),
+                        "has_code": structure_info.get("has_code", False),
+                        "has_numbers": structure_info.get("has_numbers", False),
+
+                        # 位置情報
+                        "chunk_position": position_info.get("chunk_position", ""),
+                        "relative_position": position_info.get("relative_position", 0.0),
+                        "prev_section": position_info.get("prev_section", ""),
+                        "next_section": position_info.get("next_section", ""),
+
+                        # 分析情報
+                        "information_density": analysis_info.get("information_density", 0.0),
+                        "importance": analysis_info.get("importance", "medium"),
+                        "document_type_confidence": analysis_info.get("document_type_confidence", 0.0),
+
+                        # リスト型データ
+                        "speakers": list_data.get("speakers", []),
+                        "pages": list_data.get("pages", []),
+                        "element_types": list_data.get("element_types", []),
+                        "temporal_index": list_data.get("temporal_index", 0)
                     }
                 )
 

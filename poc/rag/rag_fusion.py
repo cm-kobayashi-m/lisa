@@ -274,8 +274,30 @@ def generate_multiple_queries(
         if _is_quota_error(Exception(str(response))):
             raise GeminiQuotaError("API quota exceeded")
 
+        # レスポンスの検証
+        if not hasattr(response, 'text') or response.text is None:
+            print(f"    [WARN] Gemini APIレスポンスが空です。フォールバック処理を実行します。")
+            print(f"    [DEBUG] レスポンスオブジェクト: {response}")
+            # フォールバック: プロジェクト名をベースにしたクエリを返す
+            fallback_queries = [
+                f"{project_name}",
+                f"{project_name} システム構成",
+                f"{project_name} 技術要件"
+            ]
+            return fallback_queries[:num_queries]
+
         # レスポンスからクエリを抽出
         content = response.text.strip()
+
+        if not content:
+            print(f"    [WARN] Gemini APIレスポンステキストが空です。フォールバック処理を実行します。")
+            fallback_queries = [
+                f"{project_name}",
+                f"{project_name} システム構成",
+                f"{project_name} 技術要件"
+            ]
+            return fallback_queries[:num_queries]
+
         queries = []
 
         # 行ごとに分割して処理
@@ -305,8 +327,18 @@ def generate_multiple_queries(
             raise GeminiQuotaError(str(e))
 
         print(f"    [ERROR] クエリ生成エラー: {e}")
-        # フォールバック: プロジェクト名のみのクエリを返す
-        return [project_name] * num_queries
+        print(f"    [DEBUG] エラーの詳細: {type(e).__name__}")
+        import traceback
+        print(f"    [DEBUG] トレースバック:\n{traceback.format_exc()}")
+
+        # フォールバック: プロジェクト名をベースにしたクエリを返す
+        fallback_queries = [
+            f"{project_name}",
+            f"{project_name} システム構成",
+            f"{project_name} 技術要件"
+        ]
+        print(f"    [フォールバック] プロジェクト名ベースのクエリを使用: {fallback_queries[:num_queries]}")
+        return fallback_queries[:num_queries]
 
 
 def multi_query_search(
@@ -346,15 +378,12 @@ def multi_query_search(
     for i, query in enumerate(queries, 1):
         print(f"    [クエリ{i}/{len(queries)}] 検索中: {query[:50]}...")
 
-        # プロジェクト名でフィルタリング（指定されている場合）
-        if project_name:
-            results = retriever.search(
-                query=query,
-                k=k,
-                filter_metadata={'project_name': project_name}
-            )
-        else:
-            results = retriever.search(query=query, k=k)
+        # RAGRetrieverのsearch_similar_documentsメソッドを使用
+        results = retriever.search_similar_documents(
+            query=query,
+            project_name=project_name if project_name else None,
+            k=k
+        )
 
         # 最小スコアフィルタ
         if min_score is not None:

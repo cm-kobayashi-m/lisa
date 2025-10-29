@@ -74,8 +74,12 @@ def save_document(content: str, output_path: Optional[str] = None) -> None:
 
 
 def generate_hearing_sheet(args, vector_store, embeddings):
-    """ヒアリングシート生成"""
+    """ヒアリングシート生成（Query Translation対応版）"""
     print("[INFO] ヒアリングシート生成モード")
+
+    # 追加プロンプト情報の表示
+    if hasattr(args, 'additional_prompt') and args.additional_prompt:
+        print(f"[INFO] 追加指示: {args.additional_prompt}")
 
     # 生成器初期化
     print("\n[3/4] ヒアリングシート生成器を初期化中...")
@@ -98,18 +102,23 @@ def generate_hearing_sheet(args, vector_store, embeddings):
     if args.target_date:
         project_context["target_date"] = args.target_date
 
-    # ヒアリングシート生成
+    # ヒアリングシート生成（追加プロンプトを渡す）
     print("\n[4/4] ヒアリングシートを生成中...")
     return generator.generate(
         reflection_note=args.source_document,
         project_context=project_context if project_context else None,
-        search_k=args.search_k
+        search_k=args.search_k,
+        additional_prompt=getattr(args, 'additional_prompt', None)  # 追加プロンプトを渡す
     )
 
 
 def generate_proposal(args, vector_store, embeddings):
-    """提案書生成"""
+    """提案書生成（Query Translation対応版）"""
     print("[INFO] 提案書生成モード")
+
+    # 追加プロンプト情報の表示
+    if hasattr(args, 'additional_prompt') and args.additional_prompt:
+        print(f"[INFO] 追加指示: {args.additional_prompt}")
 
     # 生成器初期化
     print("\n[3/4] 提案書生成器を初期化中...")
@@ -126,12 +135,13 @@ def generate_proposal(args, vector_store, embeddings):
     if args.customer_name:
         project_context["customer_name"] = args.customer_name
 
-    # 提案書生成
+    # 提案書生成（追加プロンプトを渡す）
     print("\n[4/4] 提案書を生成中...")
     return generator.generate(
         source_document=args.source_document,
         project_context=project_context if project_context else None,
-        search_k=args.search_k
+        search_k=args.search_k,
+        additional_prompt=getattr(args, 'additional_prompt', None)  # 追加プロンプトを渡す
     )
 
 
@@ -210,6 +220,13 @@ def main():
             type=int,
             default=5,
             help='類似案件の検索件数（デフォルト: 5）'
+        )
+
+        # Query Translation用の追加プロンプト
+        subparser.add_argument(
+            '--additional-prompt',
+            type=str,
+            help='追加の指示やコンテキスト（例: "ヤーマン案件を参考に、期限が厳しいので精度重視で"）'
         )
 
         # テンプレートオプション

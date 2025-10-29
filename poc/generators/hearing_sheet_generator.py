@@ -84,6 +84,26 @@ class HearingSheetGenerator:
         with open(self.template_path, 'r', encoding='utf-8') as f:
             return f.read()
 
+    def _load_specialist_persona(self) -> str:
+        """
+        スペシャリストペルソナプロンプトを読み込み
+
+        specialist_persona_prompt_latest.mdを読み込んで返す。
+        ファイルが見つからない場合はデフォルトメッセージを返す。
+
+        Returns:
+            スペシャリストペルソナプロンプト
+        """
+        persona_file = Path(__file__).parent.parent / "outputs" / "specialist_persona_prompt_latest.md"
+
+        try:
+            with open(persona_file, 'r', encoding='utf-8') as f:
+                return f.read()
+        except FileNotFoundError:
+            print(f"    [WARN] ペルソナファイルが見つかりません: {persona_file}")
+            # デフォルトメッセージ
+            return "あなたは、経験豊富なPM/SA/営業のスペシャリストです。"
+
     def _extract_project_info(self, reflection_note: str) -> Dict[str, str]:
         """
         リフレクションノートから基本情報を抽出
@@ -97,7 +117,7 @@ class HearingSheetGenerator:
         extraction_prompt = f"""
 以下のリフレクションノートから、案件の基本情報を抽出してください。
 
-# リフレクションノート
+# リフレクションノート(案件情報管理シート)
 {reflection_note}
 
 # 抽出する情報
@@ -142,31 +162,65 @@ JSON形式のみを出力してください（説明や追加テキストは不�
         self,
         reflection_note: str,
         project_name: str = "",
-        k: int = 5
+        k: int = 5,
+        additional_prompt: Optional[str] = None  # Query Translation用
     ) -> List[Tuple[Document, float]]:
         """
-        類似案件のヒアリングシートを検索
+        類似案件のヒアリングシートを検索（Query Translation対応版）
 
         Args:
             reflection_note: リフレクションノート
             project_name: プロジェクト名（RAG-Fusion用）
             k: 検索する件数
+            additional_prompt: 追加の指示（Query Translation用）
 
         Returns:
             検索結果のリスト
         """
+        # Query Translation実行
+        if additional_prompt:
+            from generators.query_translator import translate_query_with_context, apply_query_filters
+
+            print(f"    [Query Translation] 追加コンテキストを考慮したクエリ生成中...")
+            translated = translate_query_with_context(
+                client=self.gemini_client,
+                source_document=reflection_note,
+                additional_prompt=additional_prompt,
+                num_queries=3
+            )
+
+            # 翻訳されたクエリとフィルタを使用
+            base_query = translated["primary_query"]
+            search_queries = [base_query] + translated.get("alternative_queries", [])
+
+            # 参考プロジェクトがある場合は優先的に検索
+            if translated.get("reference_projects"):
+                print(f"    [Query Translation] 参考プロジェクト: {', '.join(translated['reference_projects'])}")
+                # 参考プロジェクト名を検索対象に追加（プロジェクト名として扱う）
+                # NOTE: 現在の実装では特定プロジェクトのフィルタリングは
+                # RAG-Fusion内部で処理されるため、project_nameを上書き
+                if translated["reference_projects"]:
+                    # 最初の参考プロジェクトを優先
+                    project_name = translated["reference_projects"][0] or project_name
+
+            print(f"    [Query Translation] 検索クエリ: {base_query[:50]}...")
+        else:
+            # 従来通りの処理
+            base_query = f"ヒアリングシート {reflection_note[:300]}"
+            search_queries = None
+
         # RAG-Fusion有効化フラグ
         use_rag_fusion = os.getenv('USE_RAG_FUSION', 'true').lower() == 'true'
 
         if use_rag_fusion and project_name:
             print(f"    [RAG-Fusion] ヒアリングシート検索中（k={k}）...")
 
-            # RAG-Fusionで検索
+            # RAG-Fusionで検索（Query Translationの結果を使用）
             results = rag_fusion_search(
                 client=self.gemini_client,
                 retriever=self.retriever,
                 project_name=project_name,
-                base_query=f"ヒアリングシート {reflection_note[:300]}",
+                base_query=base_query,  # Query Translation済みのクエリを使用
                 k=k,
                 num_queries=int(os.getenv('RAG_FUSION_NUM_QUERIES', '3')),
                 min_score=float(os.getenv('RAG_ONLY_MODE_MIN_SCORE', '0.3')),
@@ -177,8 +231,8 @@ JSON形式のみを出力してください（説明や追加テキストは不�
         else:
             print(f"    [従来検索] ヒアリングシート検索中（k={k}）...")
 
-            # 従来の検索
-            query = reflection_note[:500]
+            # 従来の検索（Query Translationの結果を使用）
+            query = base_query if additional_prompt else reflection_note[:500]
 
             # カテゴリフィルタ付き検索
             results = self.retriever.search_by_category(
@@ -252,7 +306,7 @@ JSON形式のみを出力してください（説明や追加テキストは不�
         risk_prompt = f"""
 以下のリフレクションノートから、プロジェクトのリスクを評価してください。
 
-# リフレクションノート
+# リフレクションノート(案件情報管理シート)
 {reflection_note}
 
 # 評価基準（業務フロー文書より）
@@ -305,7 +359,7 @@ JSON形式のみを出力してください（説明や追加テキストは不�
         question_prompt = f"""
 以下のリフレクションノートから、提案に向けて追加で確認が必要な事項を洗い出してください。
 
-# リフレクションノート
+# リフレクションノート(案件情報管理シート)
 {reflection_note}
 
 {similar_hints}
@@ -326,25 +380,182 @@ JSON形式のみを出力してください（説明や追加テキストは不�
             print(f"    [WARN] 追加質問生成エラー: {e}")
             return "（追加質問を生成できませんでした）"
 
+    def _generate_hearing_sheet_with_llm(
+        self,
+        project_info: Dict[str, str],
+        risk_assessment: str,
+        similar_cases_text: str,
+        additional_questions: str,
+        reflection_note: str
+    ) -> str:
+        """
+        LLMを使ってヒアリングシート全体を生成
+
+        Args:
+            project_info: プロジェクト基本情報
+            risk_assessment: リスク評価結果
+            similar_cases_text: 類似案件情報
+            additional_questions: 追加質問項目
+            reflection_note: 元のリフレクションノート
+
+        Returns:
+            生成されたヒアリングシート（Markdown形式）
+        """
+        # テンプレートを読み込んで構造の参考にする
+        template_structure = """
+# ヒアリングシート
+
+## 1. 案件基本情報
+- 案件名
+- 顧客名
+- 業界
+- 案件規模
+- 希望導入時期
+
+## 2. 背景・課題
+- 現状の課題
+- 期待される効果
+- 優先順位
+
+## 3. リスク評価
+- 体制・規模のリスク
+- 技術的リスク
+- スケジュールリスク
+- 顧客体制のリスク
+
+## 4. 類似案件からの参考情報
+- 過去の類似案件での知見
+- 注意すべきポイント
+
+## 5. 追加確認事項
+- ヒアリングで確認すべき項目
+- 提案に向けて必要な情報
+
+## 6. 備考
+- その他特記事項
+"""
+
+        # スペシャリストペルソナを読み込み
+        specialist_persona = self._load_specialist_persona()
+
+        generation_prompt = f"""## あなたの役割
+
+{specialist_persona}
+
+## タスク
+
+以下の情報を元に、顧客とのヒアリングに使用するヒアリングシートを作成してください。
+
+# 入力情報
+
+## リフレクションノート（案件情報管理シート）
+{reflection_note}...
+
+## プロジェクト基本情報
+- 案件名: {project_info.get("project_name", "未設定")}
+- 顧客名: {project_info.get("customer_name", "未設定")}
+- 業界: {project_info.get("industry", "未設定")}
+- 案件規模: {project_info.get("scale", "未設定")}
+- 希望導入時期: {project_info.get("target_date", "未設定")}
+- 背景: {project_info.get("background", "未設定")}
+
+## リスク評価
+{risk_assessment}
+
+## 類似案件からの参考情報
+{similar_cases_text}
+
+## 追加確認事項（自動抽出）
+{additional_questions}
+
+# 出力形式
+
+以下の構造に従って、プロフェッショナルなヒアリングシートを作成してください：
+
+{template_structure}
+
+# 作成上の注意点
+
+1. **実践的な内容**: 顧客とのヒアリングで実際に使える具体的な質問や確認事項を記載
+2. **リスクベース**: 特定されたリスクに対して、どのような情報を確認すべきか明記
+3. **類似案件の活用**: 過去の類似案件から学んだ教訓を反映
+4. **優先順位**: 重要度の高い確認事項を強調
+5. **Markdown形式**: 見出し、箇条書き、表などを適切に使用
+
+# 出力
+
+Markdown形式で完全なヒアリングシートを生成してください。
+余計な説明は不要です。ヒアリングシートの内容のみを出力してください。
+"""
+
+        try:
+            response = self.llm.invoke(generation_prompt)
+            hearing_sheet = response.content.strip()
+
+            # メタデータを追加
+            current_date = datetime.now().strftime("%Y年%m月%d日")
+            footer = f"""
+
+---
+
+**作成日**: {current_date}
+**作成者**: LISA AI
+**更新日**: {current_date}
+
+*このヒアリングシートは、AIが過去の案件情報とリフレクションノートを分析して自動生成しました。*
+*実際のヒアリングでは、顧客の状況に応じて柔軟に対応してください。*
+"""
+            hearing_sheet += footer
+
+            return hearing_sheet
+
+        except Exception as e:
+            print(f"    [ERROR] ヒアリングシート生成エラー: {e}")
+            # フォールバック: 基本的な情報だけを含むシート
+            return f"""# ヒアリングシート
+
+## エラー
+
+ヒアリングシートの自動生成に失敗しました: {e}
+
+## 基本情報
+
+- 案件名: {project_info.get("project_name", "未設定")}
+- 顧客名: {project_info.get("customer_name", "未設定")}
+- 業界: {project_info.get("industry", "未設定")}
+
+## リスク評価
+
+{risk_assessment}
+
+## 追加確認事項
+
+{additional_questions}
+"""
+
     def generate(
         self,
         reflection_note: str,
         project_context: Optional[Dict[str, str]] = None,
-        search_k: int = 5
+        search_k: int = 5,
+        additional_prompt: Optional[str] = None  # Query Translation用
     ) -> str:
         """
-        ヒアリングシートを生成
+        ヒアリングシートを生成（Query Translation対応版）
 
         Args:
             reflection_note: リフレクションノート
             project_context: 追加のプロジェクト情報（辞書）
             search_k: RAG検索件数
+            additional_prompt: 追加の指示（Query Translation用）
 
         Returns:
             生成されたヒアリングシート（Markdown形式）
         """
         print("=" * 60)
         print("ヒアリングシート生成開始")
+        if additional_prompt:
+            print(f"[追加指示] {additional_prompt}")
         print("=" * 60)
 
         # 1. 基本情報抽出
@@ -355,12 +566,13 @@ JSON形式のみを出力してください（説明や追加テキストは不�
         if project_context:
             project_info.update(project_context)
 
-        # 2. 類似案件検索
+        # 2. 類似案件検索（Query Translation対応）
         print("\n[2/5] 類似案件のヒアリングシートを検索中...")
         similar_cases = self._search_similar_hearing_sheets(
             reflection_note,
             project_name=project_info.get("project_name", ""),
-            k=search_k
+            k=search_k,
+            additional_prompt=additional_prompt  # Query Translationを使用
         )
         similar_cases_text = self._format_similar_cases(similar_cases)
 
@@ -374,22 +586,14 @@ JSON形式のみを出力してください（説明や追加テキストは不�
             reflection_note, similar_cases
         )
 
-        # 5. テンプレート埋め込み
-        print("\n[5/5] ヒアリングシートを生成中...")
-        hearing_sheet = self.template.format(
-            project_name=project_info.get("project_name", ""),
-            customer_name=project_info.get("customer_name", ""),
-            industry=project_info.get("industry", ""),
-            scale=project_info.get("scale", ""),
-            target_date=project_info.get("target_date", ""),
-            background=project_info.get("background", ""),
+        # 5. LLMでヒアリングシート全体を生成
+        print("\n[5/5] LLMでヒアリングシート全体を生成中...")
+        hearing_sheet = self._generate_hearing_sheet_with_llm(
+            project_info=project_info,
             risk_assessment=risk_assessment,
-            similar_cases=similar_cases_text,
+            similar_cases_text=similar_cases_text,
             additional_questions=additional_questions,
-            notes="",
-            created_date=datetime.now().strftime("%Y年%m月%d日"),
-            creator="LISA AI",
-            updated_date=datetime.now().strftime("%Y年%m月%d日")
+            reflection_note=reflection_note
         )
 
         print("\n" + "=" * 60)

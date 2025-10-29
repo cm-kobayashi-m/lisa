@@ -39,7 +39,7 @@ def delete_s3_vectors(
     bucket_name: str,
     index_name: str,
     region: str,
-    index_only: bool = False,
+    index_only: bool = True,
     dry_run: bool = False
 ):
     """S3 Vectorsのリソースを削除"""
@@ -139,7 +139,7 @@ def main():
     )
     parser.add_argument(
         '--index-only',
-        action='store_true',
+        action='store_false',
         help='インデックスのみ削除（バケットは残す）'
     )
     parser.add_argument(

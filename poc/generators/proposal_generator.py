@@ -84,6 +84,26 @@ class ProposalGenerator:
         with open(self.template_path, 'r', encoding='utf-8') as f:
             return f.read()
 
+    def _load_specialist_persona(self) -> str:
+        """
+        スペシャリストペルソナプロンプトを読み込み
+
+        specialist_persona_prompt_latest.mdを読み込んで返す。
+        ファイルが見つからない場合はデフォルトメッセージを返す。
+
+        Returns:
+            スペシャリストペルソナプロンプト
+        """
+        persona_file = Path(__file__).parent.parent / "outputs" / "specialist_persona_prompt_latest.md"
+
+        try:
+            with open(persona_file, 'r', encoding='utf-8') as f:
+                return f.read()
+        except FileNotFoundError:
+            print(f"    [WARN] ペルソナファイルが見つかりません: {persona_file}")
+            # デフォルトメッセージ
+            return "あなたは、経験豊富なPM/SA/営業のスペシャリストです。"
+
     def _extract_project_info(self, source_document: str) -> Dict[str, str]:
         """
         ソースドキュメントから基本情報を抽出
@@ -139,31 +159,60 @@ JSON形式のみを出力してください（説明や追加テキストは不�
         self,
         source_document: str,
         project_name: str = "",
-        k: int = 5
+        k: int = 5,
+        additional_prompt: Optional[str] = None  # Query Translation用
     ) -> List[Tuple[Document, float]]:
         """
-        類似案件の提案書を検索
+        類似案件の提案書を検索（Query Translation対応版）
 
         Args:
             source_document: ヒアリングシートまたはリフレクションノート
             project_name: プロジェクト名（RAG-Fusion用）
             k: 検索する件数
+            additional_prompt: 追加の指示（Query Translation用）
 
         Returns:
             検索結果のリスト
         """
+        # Query Translation実行
+        if additional_prompt:
+            from generators.query_translator import translate_query_with_context
+
+            print(f"    [Query Translation] 追加コンテキストを考慮したクエリ生成中...")
+            translated = translate_query_with_context(
+                client=self.gemini_client,
+                source_document=source_document,
+                additional_prompt=additional_prompt,
+                num_queries=3
+            )
+
+            # 翻訳されたクエリとフィルタを使用
+            base_query = translated["primary_query"]
+
+            # 参考プロジェクトがある場合は優先的に検索
+            if translated.get("reference_projects"):
+                print(f"    [Query Translation] 参考プロジェクト: {', '.join(translated['reference_projects'])}")
+                if translated["reference_projects"]:
+                    # 最初の参考プロジェクトを優先
+                    project_name = translated["reference_projects"][0] or project_name
+
+            print(f"    [Query Translation] 検索クエリ: {base_query[:50]}...")
+        else:
+            # 従来通りの処理
+            base_query = f"提案書 {source_document[:300]}"
+
         # RAG-Fusion有効化フラグ
         use_rag_fusion = os.getenv('USE_RAG_FUSION', 'true').lower() == 'true'
 
         if use_rag_fusion and project_name:
             print(f"    [RAG-Fusion] 提案書検索中（k={k}）...")
 
-            # RAG-Fusionで検索
+            # RAG-Fusionで検索（Query Translationの結果を使用）
             results = rag_fusion_search(
                 client=self.gemini_client,
                 retriever=self.retriever,
                 project_name=project_name,
-                base_query=f"提案書 {source_document[:300]}",
+                base_query=base_query,  # Query Translation済みのクエリを使用
                 k=k,
                 num_queries=int(os.getenv('RAG_FUSION_NUM_QUERIES', '3')),
                 min_score=float(os.getenv('RAG_ONLY_MODE_MIN_SCORE', '0.3')),
@@ -174,8 +223,8 @@ JSON形式のみを出力してください（説明や追加テキストは不�
         else:
             print(f"    [従来検索] 提案書検索中（k={k}）...")
 
-            # 従来の検索
-            query = source_document[:500]
+            # 従来の検索（Query Translationの結果を使用）
+            query = base_query if additional_prompt else source_document[:500]
 
             results = self.retriever.search_by_category(
                 query=query,
@@ -423,92 +472,269 @@ JSON形式のみを出力してください。
                 "qa_items": ""
             }
 
+    def _generate_proposal_with_llm(
+        self,
+        project_info: Dict[str, str],
+        similar_cases_text: str,
+        solution: Dict[str, str],
+        plan: Dict[str, str],
+        cost: Dict[str, str],
+        risks: Dict[str, str],
+        source_document: str
+    ) -> str:
+        """
+        LLMを使って提案書全体を生成
+
+        Args:
+            project_info: プロジェクト基本情報
+            similar_cases_text: 類似案件情報
+            solution: ソリューション情報
+            plan: プロジェクト計画情報
+            cost: 費用見積情報
+            risks: リスク情報
+            source_document: 元のソースドキュメント
+
+        Returns:
+            生成された提案書（Markdown形式）
+        """
+        # テンプレート構造
+        template_structure = """
+# 提案書
+
+## 1. エグゼクティブサマリー
+- 提案の要点
+- 期待される効果
+- 投資対効果
+
+## 2. 現状分析
+- お客様の現状
+- 課題の整理
+- 課題による影響
+
+## 3. 提案するソリューション
+- ソリューション概要
+- 主要機能
+- システムアーキテクチャ
+- 技術スタック
+
+## 4. 期待される効果
+- 定量的効果
+- 定性的効果
+- ROI分析
+
+## 5. 実施体制とスケジュール
+- プロジェクト体制
+- 実施スケジュール
+- 主要マイルストーン
+
+## 6. 概算費用
+- 費用内訳
+- 支払条件
+
+## 7. リスクと対策
+- 想定されるリスク
+- リスク軽減策
+
+## 8. 類似案件実績
+- 過去の類似案件
+- 成功事例
+
+## 9. 次のステップ
+- 提案後のプロセス
+- Q&A・追加ヒアリング事項
+
+## 10. 付録
+- 用語集
+- 参考資料
+"""
+
+        # スペシャリストペルソナを読み込み
+        specialist_persona = self._load_specialist_persona()
+
+        generation_prompt = f"""## あなたの役割
+
+{specialist_persona}
+
+## タスク
+
+以下の情報を元に、顧客に提出するプロフェッショナルな提案書を作成してください。
+
+# 入力情報
+
+## ソースドキュメント（ヒアリングシート/リフレクションノート）
+{source_document}...
+
+## プロジェクト基本情報
+- 案件名: {project_info.get("project_name", "未設定")}
+- 顧客名: {project_info.get("customer_name", "未設定")}
+- 業界: {project_info.get("industry", "未設定")}
+- 現状: {project_info.get("current_situation", "未設定")}
+- 課題: {project_info.get("challenges", "未設定")}
+- 影響: {project_info.get("impact", "未設定")}
+
+## ソリューション提案
+- エグゼクティブサマリー: {solution.get("executive_summary", "未設定")}
+- ソリューション概要: {solution.get("solution_overview", "未設定")}
+- 提案機能: {solution.get("proposed_features", "未設定")}
+- アーキテクチャ: {solution.get("architecture", "未設定")}
+- 技術スタック: {solution.get("technology_stack", "未設定")}
+- 期待される効果: {solution.get("expected_benefits", "未設定")}
+- ROI分析: {solution.get("roi_analysis", "未設定")}
+
+## プロジェクト計画
+- プロジェクト体制: {plan.get("project_structure", "未設定")}
+- スケジュール: {plan.get("schedule", "未設定")}
+- マイルストーン: {plan.get("milestones", "未設定")}
+
+## 費用見積
+- 費用内訳: {cost.get("cost_breakdown", "未設定")}
+- 支払条件: {cost.get("payment_terms", "未設定")}
+
+## リスクと対策
+- 想定リスク: {risks.get("risks", "未設定")}
+- リスク軽減策: {risks.get("risk_mitigation", "未設定")}
+- 次のステップ: {risks.get("next_steps", "未設定")}
+- Q&A項目: {risks.get("qa_items", "未設定")}
+
+## 類似案件実績
+{similar_cases_text}
+
+# 出力形式
+
+以下の構造に従って、プロフェッショナルな提案書を作成してください：
+
+{template_structure}
+
+# 作成上の注意点
+
+1. **顧客目線**: 顧客のビジネス課題を理解し、それに対する解決策を明確に提示
+2. **具体性**: 曖昧な表現を避け、定量的な数値や具体的な実装方法を記載
+3. **説得力**: 類似案件の実績やROI分析を活用して、提案の妥当性を示す
+4. **リスク対策**: リスクを隠さず、対策を明確にすることで信頼性を高める
+5. **読みやすさ**: 見出し、箇条書き、表などを適切に使用して構造化
+6. **Markdown形式**: 完全なMarkdown形式で出力
+
+# 出力
+
+Markdown形式で完全な提案書を生成してください。
+余計な説明は不要です。提案書の内容のみを出力してください。
+"""
+
+        try:
+            response = self.llm.invoke(generation_prompt)
+            proposal = response.content.strip()
+
+            # メタデータを追加
+            current_date = datetime.now().strftime("%Y年%m月%d日")
+            footer = f"""
+
+---
+
+**作成日**: {current_date}
+**作成者**: LISA AI
+**更新日**: {current_date}
+**承認者**: （承認者名）
+**有効期限**: 提案日より30日間
+
+*この提案書は、AIが過去の案件情報とヒアリング結果を分析して自動生成しました。*
+*実際の提案では、顧客の状況に応じて内容を調整してください。*
+"""
+            proposal += footer
+
+            return proposal
+
+        except Exception as e:
+            print(f"    [ERROR] 提案書生成エラー: {e}")
+            # フォールバック
+            return f"""# 提案書
+
+## エラー
+
+提案書の自動生成に失敗しました: {e}
+
+## 基本情報
+
+- 案件名: {project_info.get("project_name", "未設定")}
+- 顧客名: {project_info.get("customer_name", "未設定")}
+- 業界: {project_info.get("industry", "未設定")}
+
+## ソリューション概要
+
+{solution.get("solution_overview", "未設定")}
+
+## リスクと対策
+
+{risks.get("risks", "未設定")}
+"""
+
     def generate(
         self,
         source_document: str,
         project_context: Optional[Dict[str, str]] = None,
-        search_k: int = 5
+        search_k: int = 5,
+        additional_prompt: Optional[str] = None  # Query Translation用
     ) -> str:
         """
-        提案書を生成
+        提案書を生成（Query Translation対応版）
 
         Args:
             source_document: ヒアリングシートまたはリフレクションノート
             project_context: 追加のプロジェクト情報（辞書）
             search_k: RAG検索件数
+            additional_prompt: 追加の指示（Query Translation用）
 
         Returns:
             生成された提案書（Markdown形式）
         """
         print("=" * 60)
         print("提案書生成開始")
+        if additional_prompt:
+            print(f"[追加指示] {additional_prompt}")
         print("=" * 60)
 
         # 1. 基本情報抽出
-        print("\n[1/6] ソースドキュメントから基本情報を抽出中...")
+        print("\n[1/7] ソースドキュメントから基本情報を抽出中...")
         project_info = self._extract_project_info(source_document)
 
         if project_context:
             project_info.update(project_context)
 
-        # 2. 類似案件検索
-        print("\n[2/6] 類似案件の提案書を検索中...")
+        # 2. 類似案件検索（Query Translation対応）
+        print("\n[2/7] 類似案件の提案書を検索中...")
         similar_cases = self._search_similar_proposals(
             source_document,
             project_name=project_info.get("project_name", ""),
-            k=search_k
+            k=search_k,
+            additional_prompt=additional_prompt  # Query Translationを使用
         )
         similar_cases_text = self._format_similar_cases(similar_cases)
 
         # 3. ソリューション生成
-        print("\n[3/6] ソリューションを生成中...")
+        print("\n[3/7] ソリューションを生成中...")
         solution = self._generate_solution(source_document, project_info, similar_cases)
 
         # 4. プロジェクト計画生成
-        print("\n[4/6] プロジェクト計画を生成中...")
+        print("\n[4/7] プロジェクト計画を生成中...")
         plan = self._generate_project_plan(source_document, project_info)
 
         # 5. 費用見積生成
-        print("\n[5/6] 概算費用を生成中...")
+        print("\n[5/7] 概算費用を生成中...")
         cost = self._generate_cost_estimate(source_document, project_info)
 
         # 6. リスク・次ステップ生成
-        print("\n[6/6] リスクと次のステップを生成中...")
+        print("\n[6/7] リスクと次のステップを生成中...")
         risks = self._generate_risks_and_next_steps(source_document)
 
-        # テンプレート埋め込み
-        print("\n提案書を最終生成中...")
-        proposal = self.template.format(
-            project_name=project_info.get("project_name", ""),
-            customer_name=project_info.get("customer_name", ""),
-            current_situation=project_info.get("current_situation", ""),
-            challenges=project_info.get("challenges", ""),
-            impact=project_info.get("impact", ""),
-            executive_summary=solution.get("executive_summary", ""),
-            solution_overview=solution.get("solution_overview", ""),
-            proposed_features=solution.get("proposed_features", ""),
-            architecture=solution.get("architecture", ""),
-            technology_stack=solution.get("technology_stack", ""),
-            expected_benefits=solution.get("expected_benefits", ""),
-            roi_analysis=solution.get("roi_analysis", ""),
-            project_structure=plan.get("project_structure", ""),
-            schedule=plan.get("schedule", ""),
-            milestones=plan.get("milestones", ""),
-            cost_breakdown=cost.get("cost_breakdown", ""),
-            payment_terms=cost.get("payment_terms", ""),
-            risks=risks.get("risks", ""),
-            risk_mitigation=risks.get("risk_mitigation", ""),
-            similar_cases=similar_cases_text,
-            next_steps=risks.get("next_steps", ""),
-            qa_items=risks.get("qa_items", ""),
-            glossary="（必要に応じて追加）",
-            references="（必要に応じて追加）",
-            created_date=datetime.now().strftime("%Y年%m月%d日"),
-            updated_date=datetime.now().strftime("%Y年%m月%d日"),
-            creator="LISA AI",
-            approver="（承認者名）",
-            validity_period="提案日より30日間",
-            notes=""
+        # LLMで提案書全体を生成
+        print("\n[7/7] LLMで提案書全体を生成中...")
+        proposal = self._generate_proposal_with_llm(
+            project_info=project_info,
+            similar_cases_text=similar_cases_text,
+            solution=solution,
+            plan=plan,
+            cost=cost,
+            risks=risks,
+            source_document=source_document
         )
 
         print("\n" + "=" * 60)

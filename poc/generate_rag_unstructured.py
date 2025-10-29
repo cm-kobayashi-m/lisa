@@ -225,7 +225,13 @@ def list_project_folders(service, projects_folder_id: str) -> List[Dict[str, str
 
     results = (
         service.files()
-        .list(q=query, fields="files(id, name)", orderBy="name")
+        .list(
+            q=query,
+            fields="files(id, name)",
+            orderBy="name",
+            supportsAllDrives=True,  # 共有ドライブサポート
+            includeItemsFromAllDrives=True,  # 共有ドライブのアイテムを含める
+        )
         .execute()
     )
 
@@ -270,6 +276,8 @@ def list_files_in_folder(service, folder_id: str) -> List[Dict[str, str]]:
                 q=query,
                 fields="files(id, name, mimeType, size, createdTime, modifiedTime)",
                 pageSize=1000,
+                supportsAllDrives=True,  # 共有ドライブサポート
+                includeItemsFromAllDrives=True,  # 共有ドライブのアイテムを含める
             )
             .execute()
         )
@@ -303,6 +311,9 @@ class OptimizedChunker:
             chunk_overlap=120,
             separators=["\n\n", "\n", "。", ".", " ", ""],
         )
+        # チャンク処理時の状態管理
+        self.current_document_type = None
+        self.current_document_confidence = 0.0
 
     def check_pdf_has_text(self, file_path: str) -> bool:
         """PDFにテキストが含まれているか事前チェック（Phase 1改善）"""
@@ -463,7 +474,10 @@ class OptimizedChunker:
                 # その他のファイル
                 else:
                     print(f"    {log_prefix} [ダウンロード] ファイルダウンロード中...")
-                    request = service.files().get_media(fileId=file_id)
+                    request = service.files().get_media(
+                        fileId=file_id,
+                        supportsAllDrives=True  # 共有ドライブサポート
+                    )
 
                 # ダウンロード実行（直接ファイルに書き込み）
                 downloader = MediaIoBaseDownload(tmp, request)
@@ -635,7 +649,7 @@ class OptimizedChunker:
     def _elements_to_chunks(
         self, elements: List[Any], project_name: str, file_name: str
     ) -> List[Dict]:
-        """Elementsを構造的にチャンク化"""
+        """Elementsを構造的にチャンク化（改善版）"""
         log_prefix = f"[{file_name}]"
         try:
             print(f"    {log_prefix} [処理] {len(elements)}個のElementsをチャンク化中...")
@@ -649,75 +663,21 @@ class OptimizedChunker:
             )
             print(f"    {log_prefix} [分類] 判定結果: {document_type} (信頼度: {confidence:.2f})")
 
-            # chunk_by_titleで論理単位にグループ化
-            title_chunks = chunk_by_title(
-                elements,
-                max_characters=1200,
-                new_after_n_chars=1000,
-                combine_text_under_n_chars=200,
-                multipage_sections=True,
-            )
+            # 状態を保存
+            self.current_document_type = document_type
+            self.current_document_confidence = confidence
 
-            chunks = []
-            for idx, tc in enumerate(title_chunks):
-                # テキストを結合
-                text_parts = []
-                for element in tc.elements if hasattr(tc, "elements") else [tc]:
-                    elem_text = getattr(element, "text", "") or ""
-                    if elem_text:
-                        text_parts.append(elem_text)
-
-                text = " ".join(text_parts).strip()
-                if not text:
-                    continue
-
-                # 長すぎる場合は追加で分割
-                if len(text) > 1400:
-                    sub_texts = self.text_splitter.split_text(text)
-                else:
-                    sub_texts = [text]
-
-                # チャンク作成
-                for sub_idx, sub_text in enumerate(sub_texts):
-                    # Element種別を取得（Title, Text等）
-                    element_types = set()
-                    if hasattr(tc, "category"):
-                        element_types.add(tc.category)
-
-                    # ページを取得
-                    pages = set()
-                    if hasattr(tc, "metadata") and hasattr(tc.metadata, "page_number"):
-                        pages.add(tc.metadata.page_number)
-
-                    # タイトルを取得
-                    title = ""
-                    if hasattr(tc, "title"):
-                        title = tc.title
-                    elif hasattr(tc, "metadata") and hasattr(tc.metadata, "title"):
-                        title = tc.metadata.title
-
-                    chunks.append(
-                        {
-                            "text": sub_text,
-                            "metadata": {
-                                "project_name": project_name,
-                                "file_name": file_name,
-                                "chunk_index": len(chunks),
-                                "title": title.strip()
-                                if title
-                                else f"Section {idx + 1}",
-                                # ドキュメント種別（LLM判定）
-                                "document_type": document_type,
-                                "document_type_confidence": confidence,
-                                # Element種別（unstructured判定）
-                                "element_types": list(element_types) if element_types else [],
-                                "pages": sorted(list(pages)) if pages else [],
-                                "importance": "medium",
-                            },
-                        }
-                    )
-
-            return chunks
+            # ドキュメント種別に応じた処理を選択
+            if document_type == "technical_document":
+                return self._chunk_technical_document(elements, project_name, file_name)
+            elif document_type == "meeting_minutes":
+                return self._chunk_meeting_minutes(elements, project_name, file_name)
+            elif document_type == "proposal":
+                return self._chunk_proposal(elements, project_name, file_name)
+            else:
+                # デフォルト: 適応的なチャンク化
+                return self._chunk_by_title_adaptive(elements, project_name, file_name,
+                                                    document_type, confidence)
 
         except Exception as e:
             log_prefix = f"[{file_name}]"
@@ -725,6 +685,193 @@ class OptimizedChunker:
             print(f"    {log_prefix} [DEBUG] {traceback.format_exc()}")
             # フォールバック：単純な分割
             return self._simple_chunk(elements, project_name, file_name)
+
+    def _chunk_by_title_adaptive(
+        self, elements: List[Any], project_name: str, file_name: str,
+        document_type: str, confidence: float
+    ) -> List[Dict]:
+        """適応的なタイトルベースチャンク化"""
+        log_prefix = f"[{file_name}]"
+
+        # 文書サイズに応じてパラメータを調整
+        total_text_length = sum(len(getattr(e, "text", "")) for e in elements)
+
+        if total_text_length > 50000:  # 長文書
+            max_chars = 1500
+            new_after = 1200
+        elif total_text_length > 10000:  # 中文書
+            max_chars = 1200
+            new_after = 1000
+        else:  # 短文書
+            max_chars = 800
+            new_after = 600
+
+        print(f"    {log_prefix} [適応] 文書サイズ: {total_text_length}文字, max_chars: {max_chars}")
+
+        # chunk_by_titleで論理単位にグループ化
+        title_chunks = chunk_by_title(
+            elements,
+            max_characters=max_chars,
+            new_after_n_chars=new_after,
+            combine_text_under_n_chars=200,
+            multipage_sections=True,
+        )
+
+        chunks = []
+        for idx, tc in enumerate(title_chunks):
+            # テキストを抽出
+            text = self._extract_text_from_chunk(tc)
+            if not text:
+                continue
+
+            # 長すぎる場合は段落境界で分割（改善版）
+            if len(text) > max_chars * 1.5:
+                sub_texts = self._split_by_paragraph(text, max_chars)
+                for sub_idx, sub_text in enumerate(sub_texts):
+                    chunk_data = self._create_enhanced_chunk(
+                        sub_text, tc, project_name, file_name,
+                        idx, sub_idx, document_type, confidence
+                    )
+                    chunks.append(chunk_data)
+            else:
+                # そのまま使用（純度維持）
+                chunk_data = self._create_enhanced_chunk(
+                    text, tc, project_name, file_name,
+                    idx, 0, document_type, confidence
+                )
+                chunks.append(chunk_data)
+
+        # チャンク間の関係性を追加
+        self._add_chunk_relationships(chunks)
+
+        return chunks
+
+    def _chunk_technical_document(
+        self, elements: List[Any], project_name: str, file_name: str
+    ) -> List[Dict]:
+        """技術文書向けチャンク化（セクション構造重視）"""
+        log_prefix = f"[{file_name}]"
+        print(f"    {log_prefix} [技術文書] セクション構造を重視したチャンク化")
+
+        # セクション構造を保持しながらチャンク化
+        title_chunks = chunk_by_title(
+            elements,
+            max_characters=1500,  # 技術文書は長めに
+            new_after_n_chars=1300,
+            combine_text_under_n_chars=300,
+            multipage_sections=True,
+        )
+
+        chunks = []
+        for idx, tc in enumerate(title_chunks):
+            text = self._extract_text_from_chunk(tc)
+            if not text:
+                continue
+
+            # コードブロックを検出して保持
+            has_code = self._detect_code_block(text)
+
+            # 技術文書は段落境界を尊重
+            if len(text) > 2000:
+                sub_texts = self._split_by_paragraph(text, 1500)
+                for sub_idx, sub_text in enumerate(sub_texts):
+                    chunk_data = self._create_enhanced_chunk(
+                        sub_text, tc, project_name, file_name,
+                        idx, sub_idx, "technical_document", self.current_document_confidence
+                    )
+                    chunk_data["metadata"]["has_code"] = has_code
+                    chunks.append(chunk_data)
+            else:
+                chunk_data = self._create_enhanced_chunk(
+                    text, tc, project_name, file_name,
+                    idx, 0, "technical_document", self.current_document_confidence
+                )
+                chunk_data["metadata"]["has_code"] = has_code
+                chunks.append(chunk_data)
+
+        self._add_chunk_relationships(chunks)
+        return chunks
+
+    def _chunk_meeting_minutes(
+        self, elements: List[Any], project_name: str, file_name: str
+    ) -> List[Dict]:
+        """議事録向けチャンク化（時系列と発言者重視）"""
+        log_prefix = f"[{file_name}]"
+        print(f"    {log_prefix} [議事録] 時系列と発言者を重視したチャンク化")
+
+        # 議事録は短めのチャンクで時系列を保持
+        title_chunks = chunk_by_title(
+            elements,
+            max_characters=800,
+            new_after_n_chars=600,
+            combine_text_under_n_chars=150,
+            multipage_sections=True,
+        )
+
+        chunks = []
+        for idx, tc in enumerate(title_chunks):
+            text = self._extract_text_from_chunk(tc)
+            if not text:
+                continue
+
+            # 発言者を検出
+            speakers = self._detect_speakers(text)
+
+            chunk_data = self._create_enhanced_chunk(
+                text, tc, project_name, file_name,
+                idx, 0, "meeting_minutes", self.current_document_confidence
+            )
+            chunk_data["metadata"]["speakers"] = speakers
+            chunk_data["metadata"]["temporal_index"] = idx  # 時系列インデックス
+            chunks.append(chunk_data)
+
+        self._add_chunk_relationships(chunks)
+        return chunks
+
+    def _chunk_proposal(
+        self, elements: List[Any], project_name: str, file_name: str
+    ) -> List[Dict]:
+        """提案書向けチャンク化（章立て構造重視）"""
+        log_prefix = f"[{file_name}]"
+        print(f"    {log_prefix} [提案書] 章立て構造を重視したチャンク化")
+
+        # 提案書は標準的なサイズでセクションを保持
+        title_chunks = chunk_by_title(
+            elements,
+            max_characters=1200,
+            new_after_n_chars=1000,
+            combine_text_under_n_chars=200,
+            multipage_sections=True,
+        )
+
+        chunks = []
+        for idx, tc in enumerate(title_chunks):
+            text = self._extract_text_from_chunk(tc)
+            if not text:
+                continue
+
+            # 数値データ（金額、期間等）を検出
+            has_numbers = self._detect_numbers(text)
+
+            if len(text) > 1400:
+                sub_texts = self._split_by_paragraph(text, 1200)
+                for sub_idx, sub_text in enumerate(sub_texts):
+                    chunk_data = self._create_enhanced_chunk(
+                        sub_text, tc, project_name, file_name,
+                        idx, sub_idx, "proposal", self.current_document_confidence
+                    )
+                    chunk_data["metadata"]["has_numbers"] = has_numbers
+                    chunks.append(chunk_data)
+            else:
+                chunk_data = self._create_enhanced_chunk(
+                    text, tc, project_name, file_name,
+                    idx, 0, "proposal", self.current_document_confidence
+                )
+                chunk_data["metadata"]["has_numbers"] = has_numbers
+                chunks.append(chunk_data)
+
+        self._add_chunk_relationships(chunks)
+        return chunks
 
     def _simple_chunk(
         self, elements: List[Any], project_name: str, file_name: str
@@ -780,6 +927,318 @@ class OptimizedChunker:
         except Exception as e:
             print(f"    {log_prefix} [ERROR] フォールバックチャンク化エラー: {e}")
             return []
+
+    # ========== ヘルパーメソッド（改善版） ==========
+
+    def _extract_text_from_chunk(self, chunk: Any) -> str:
+        """チャンクからテキストを抽出"""
+        text_parts = []
+        elements = chunk.elements if hasattr(chunk, "elements") else [chunk]
+
+        for element in elements:
+            elem_text = getattr(element, "text", "") or ""
+            if elem_text:
+                text_parts.append(elem_text)
+
+        return " ".join(text_parts).strip()
+
+    def _split_by_paragraph(self, text: str, max_length: int) -> List[str]:
+        """段落境界でテキストを分割（文脈保持）"""
+        # 段落で分割
+        paragraphs = text.split('\n\n')
+
+        result = []
+        current_chunk = ""
+
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+
+            # 現在のチャンクに追加しても最大長を超えない場合
+            if len(current_chunk) + len(para) + 2 < max_length:
+                if current_chunk:
+                    current_chunk += "\n\n" + para
+                else:
+                    current_chunk = para
+            else:
+                # 現在のチャンクを保存して新しいチャンク開始
+                if current_chunk:
+                    result.append(current_chunk)
+
+                # 段落自体が長すぎる場合は、文境界で分割
+                if len(para) > max_length:
+                    sentences = self._split_by_sentence(para)
+                    temp_chunk = ""
+                    for sent in sentences:
+                        if len(temp_chunk) + len(sent) + 1 < max_length:
+                            temp_chunk = temp_chunk + " " + sent if temp_chunk else sent
+                        else:
+                            if temp_chunk:
+                                result.append(temp_chunk)
+                            temp_chunk = sent
+                    if temp_chunk:
+                        current_chunk = temp_chunk
+                else:
+                    current_chunk = para
+
+        # 最後のチャンクを追加
+        if current_chunk:
+            result.append(current_chunk)
+
+        return result if result else [text[:max_length]]
+
+    def _split_by_sentence(self, text: str) -> List[str]:
+        """文境界でテキストを分割"""
+        import re
+        # 日本語と英語の文境界で分割
+        sentences = re.split(r'(?<=[。！？\.!?])\s*', text)
+        return [s.strip() for s in sentences if s.strip()]
+
+    def _create_enhanced_chunk(
+        self, text: str, element_chunk: Any, project_name: str, file_name: str,
+        section_idx: int, sub_idx: int, document_type: str, confidence: float
+    ) -> Dict:
+        """強化されたメタデータを持つチャンク作成"""
+
+        # 基本メタデータ
+        metadata = {
+            "project_name": project_name,
+            "file_name": file_name,
+            "chunk_index": section_idx * 100 + sub_idx,  # 階層的インデックス
+            "document_type": document_type,
+            "document_type_confidence": confidence,
+        }
+
+        # タイトル情報
+        title = self._extract_title(element_chunk)
+        metadata["title"] = title if title else f"Section {section_idx + 1}"
+
+        # 階層情報
+        metadata["heading_level"] = self._extract_heading_level(element_chunk)
+        metadata["section_path"] = self._build_section_path(element_chunk, section_idx)
+
+        # 構造情報
+        metadata["has_table"] = self._contains_table(element_chunk)
+        metadata["has_list"] = self._contains_list(element_chunk)
+
+        # Element種別
+        metadata["element_types"] = self._extract_element_types(element_chunk)
+
+        # ページ情報
+        metadata["pages"] = self._extract_pages(element_chunk)
+
+        # 位置情報
+        metadata["chunk_position"] = self._determine_position(section_idx)
+
+        # 情報密度
+        metadata["information_density"] = self._calculate_information_density(text)
+
+        # 重要度
+        metadata["importance"] = self._calculate_importance(text, metadata)
+
+        return {
+            "text": text,
+            "metadata": metadata
+        }
+
+    def _extract_title(self, chunk: Any) -> str:
+        """チャンクからタイトルを抽出"""
+        if hasattr(chunk, "title"):
+            return chunk.title
+        elif hasattr(chunk, "metadata") and hasattr(chunk.metadata, "title"):
+            return chunk.metadata.title
+        return ""
+
+    def _extract_heading_level(self, chunk: Any) -> int:
+        """見出しレベルを抽出（1-6）"""
+        # Unstructuredの要素タイプから推定
+        if hasattr(chunk, "category"):
+            category = chunk.category.lower() if isinstance(chunk.category, str) else ""
+            if "title" in category:
+                # タイトルのサイズやスタイルから推定（簡易版）
+                if hasattr(chunk, "metadata"):
+                    # フォントサイズなどから推定する場合
+                    return 1  # デフォルトで1
+            elif "header" in category:
+                return 2
+            elif "subheader" in category:
+                return 3
+        return 0  # 見出しではない
+
+    def _build_section_path(self, chunk: Any, section_idx: int) -> str:
+        """セクション階層パスを構築"""
+        # 簡易版：実際はドキュメント全体の構造から構築
+        title = self._extract_title(chunk)
+        if title:
+            return title
+        return f"Section {section_idx + 1}"
+
+    def _contains_table(self, chunk: Any) -> bool:
+        """テーブルが含まれるかチェック"""
+        if hasattr(chunk, "elements"):
+            for elem in chunk.elements:
+                if hasattr(elem, "category") and "table" in str(elem.category).lower():
+                    return True
+        elif hasattr(chunk, "category") and "table" in str(chunk.category).lower():
+            return True
+
+        # テキスト内のテーブル記号をチェック
+        text = self._extract_text_from_chunk(chunk)
+        return "|\t" in text or " | " in text
+
+    def _contains_list(self, chunk: Any) -> bool:
+        """リストが含まれるかチェック"""
+        if hasattr(chunk, "elements"):
+            for elem in chunk.elements:
+                if hasattr(elem, "category") and "list" in str(elem.category).lower():
+                    return True
+
+        # テキスト内のリスト記号をチェック
+        text = self._extract_text_from_chunk(chunk)
+        list_patterns = ["\n- ", "\n* ", "\n• ", "\n1. ", "\n2. ", "・"]
+        return any(pattern in text for pattern in list_patterns)
+
+    def _extract_element_types(self, chunk: Any) -> List[str]:
+        """Element種別を抽出"""
+        types = set()
+        if hasattr(chunk, "category"):
+            types.add(str(chunk.category))
+        if hasattr(chunk, "elements"):
+            for elem in chunk.elements:
+                if hasattr(elem, "category"):
+                    types.add(str(elem.category))
+        return list(types)
+
+    def _extract_pages(self, chunk: Any) -> List[int]:
+        """ページ番号を抽出"""
+        pages = set()
+        if hasattr(chunk, "metadata") and hasattr(chunk.metadata, "page_number"):
+            pages.add(chunk.metadata.page_number)
+        if hasattr(chunk, "elements"):
+            for elem in chunk.elements:
+                if hasattr(elem, "metadata") and hasattr(elem.metadata, "page_number"):
+                    pages.add(elem.metadata.page_number)
+        return sorted(list(pages))
+
+    def _determine_position(self, section_idx: int) -> str:
+        """文書内での位置を判定"""
+        # 簡易版：実際の実装では総セクション数を考慮
+        if section_idx == 0:
+            return "beginning"
+        elif section_idx < 3:
+            return "beginning"
+        else:
+            return "middle"
+
+    def _calculate_information_density(self, text: str) -> float:
+        """情報密度を計算（0.0-1.0）"""
+        if not text:
+            return 0.0
+
+        # 簡易版：文字数、数値、専門用語の密度から計算
+        text_length = len(text)
+
+        # 数値の密度
+        import re
+        numbers = re.findall(r'\d+', text)
+        number_density = len(numbers) / max(text_length / 100, 1)
+
+        # 句読点の密度（文の複雑さの指標）
+        punctuation_count = text.count('。') + text.count('.') + text.count('、') + text.count(',')
+        punctuation_density = punctuation_count / max(text_length / 100, 1)
+
+        # カタカナ語（専門用語の指標）
+        katakana_words = re.findall(r'[ア-ン]+', text)
+        katakana_density = len(katakana_words) / max(text_length / 100, 1)
+
+        # 総合密度
+        density = min(1.0, (number_density * 0.3 + punctuation_density * 0.3 + katakana_density * 0.4) / 3)
+        return round(density, 2)
+
+    def _calculate_importance(self, text: str, metadata: Dict) -> str:
+        """チャンクの重要度を計算"""
+        score = 0
+
+        # 見出しレベルによる重み
+        heading_level = metadata.get("heading_level", 0)
+        if heading_level > 0:
+            score += (7 - heading_level) * 10  # レベル1が最も重要
+
+        # 情報密度による重み
+        density = metadata.get("information_density", 0)
+        score += density * 30
+
+        # 構造要素による重み
+        if metadata.get("has_table"):
+            score += 20
+        if metadata.get("has_list"):
+            score += 10
+
+        # 位置による重み
+        position = metadata.get("chunk_position", "middle")
+        if position == "beginning":
+            score += 15
+
+        # スコアから重要度を決定
+        if score >= 60:
+            return "high"
+        elif score >= 30:
+            return "medium"
+        else:
+            return "low"
+
+    def _add_chunk_relationships(self, chunks: List[Dict]) -> None:
+        """チャンク間の関係性情報を追加"""
+        for i, chunk in enumerate(chunks):
+            # 前のセクション
+            if i > 0:
+                chunk["metadata"]["prev_section"] = chunks[i-1]["metadata"]["title"]
+            else:
+                chunk["metadata"]["prev_section"] = None
+
+            # 次のセクション
+            if i < len(chunks) - 1:
+                chunk["metadata"]["next_section"] = chunks[i+1]["metadata"]["title"]
+            else:
+                chunk["metadata"]["next_section"] = None
+
+            # 相対位置
+            chunk["metadata"]["relative_position"] = round(i / max(len(chunks) - 1, 1), 2)
+
+    def _detect_code_block(self, text: str) -> bool:
+        """コードブロックの検出"""
+        code_indicators = ["```", "def ", "class ", "import ", "function ", "const ", "var ", "let "]
+        return any(indicator in text for indicator in code_indicators)
+
+    def _detect_speakers(self, text: str) -> List[str]:
+        """発言者の検出（議事録用）"""
+        import re
+        # 「名前:」「名前：」パターンの検出
+        speakers = re.findall(r'^([^:：\n]+)[：:]', text, re.MULTILINE)
+        # 「【名前】」パターンの検出
+        speakers.extend(re.findall(r'【([^】]+)】', text))
+        # 重複を除去
+        return list(set(speakers))[:5]  # 最大5人まで
+
+    def _detect_numbers(self, text: str) -> bool:
+        """数値データの検出（提案書用）"""
+        import re
+        # 金額、パーセント、期間などの検出
+        patterns = [
+            r'\d+円',
+            r'\d+万円',
+            r'\d+億円',
+            r'\d+%',
+            r'\d+％',
+            r'\d+年',
+            r'\d+ヶ月',
+            r'\d+日間',
+        ]
+        for pattern in patterns:
+            if re.search(pattern, text):
+                return True
+        return False
 
 
 class OptimizedVectorDBBuilder:
