@@ -1270,6 +1270,11 @@ class OptimizedVectorDBBuilder:
         self.chunk_buffer = []
         self.document_buffer = []
 
+        # 進捗管理用カウンタ
+        self.total_chunks = 0  # 全体のチャンク数
+        self.processed_chunks = 0  # 処理済みチャンク数
+        self.saved_chunks = 0  # S3に保存済みチャンク数
+
     def save_chunks_batch(self, chunks: List[Dict], file_name: str) -> int:
         """チャンクをバッファに追加（Phase 1: バッチ処理）"""
 
@@ -1277,7 +1282,11 @@ class OptimizedVectorDBBuilder:
             return 0
 
         log_prefix = f"[{file_name}]"
-        print(f"    {log_prefix} [処理] {len(chunks)}個のチャンクをバッファに追加...")
+
+        # 全体のチャンク数を更新
+        new_chunks_count = len(chunks)
+        self.total_chunks += new_chunks_count
+        print(f"    {log_prefix} [処理] {new_chunks_count}個のチャンクをバッファに追加... (全体進捗: {self.total_chunks}個)")
 
         for chunk_info in chunks:
             self.chunk_buffer.append({
@@ -1301,7 +1310,10 @@ class OptimizedVectorDBBuilder:
         batch = self.chunk_buffer[:batch_size]
         self.chunk_buffer = self.chunk_buffer[batch_size:]
 
-        print(f"    [バッチ処理] {batch_size}個のチャンクをベクトル化中...")
+        # 全体の進捗を表示
+        start_idx = self.processed_chunks + 1
+        end_idx = self.processed_chunks + batch_size
+        print(f"    [バッチ処理] チャンク {start_idx}-{end_idx}/{self.total_chunks}個をベクトル化中...")
 
         # テキストを抽出
         texts = [item["chunk"]["text"] for item in batch]
@@ -1313,7 +1325,8 @@ class OptimizedVectorDBBuilder:
             vectors = []
             for i, text in enumerate(texts, 1):
                 if i % 10 == 0:
-                    print(f"    [進捗] ベクトル化: {i}/{len(texts)}")
+                    current_total = self.processed_chunks + i
+                    print(f"    [進捗] ベクトル化: {i}/{batch_size} (全体: {current_total}/{self.total_chunks})")
                 vector = self.embeddings.embed_text(text)
                 vectors.append(vector)
 
@@ -1353,23 +1366,55 @@ class OptimizedVectorDBBuilder:
 
         # バッチでS3保存（Phase 1改善）
         if documents:
-            print(f"    [バッチ処理] {len(documents)}個のドキュメントをS3に保存中...")
+            # 処理済みチャンク数を更新
+            self.processed_chunks += batch_size
+            self.saved_chunks += len(documents)
+
+            print(f"    [バッチ処理] {len(documents)}個のドキュメントをS3に保存中... (全体進捗: {self.saved_chunks}/{self.total_chunks})")
             # TODO: batch_add_documentsメソッドが実装されていない場合
             # 現状は既存のadd_documentsメソッドを使用（内部でバッチ処理）
             added = self.vector_store.add_documents(documents, batch_size=S3_BATCH_SIZE)
+
+            # 完了率を表示
+            if self.total_chunks > 0:
+                completion_rate = (self.saved_chunks / self.total_chunks) * 100
+                print(f"    [進捗] 全体の {completion_rate:.1f}% 完了 ({self.saved_chunks}/{self.total_chunks} チャンク)")
+
             return added
 
+        # ドキュメントが作成されなかった場合も処理済みとしてカウント
+        self.processed_chunks += batch_size
         return 0
 
     def flush_buffers(self) -> int:
         """残りのバッファをすべて処理"""
         total_added = 0
 
+        if self.chunk_buffer:
+            remaining = len(self.chunk_buffer)
+            print(f"\n    [フラッシュ] 残り {remaining} 個のチャンクを処理中...")
+
         while self.chunk_buffer:
             added = self.process_batch()
             total_added += added
 
+        # 最終統計を表示
+        if self.total_chunks > 0:
+            print(f"\n    [完了] 全チャンク処理完了:")
+            print(f"      - 総チャンク数: {self.total_chunks}")
+            print(f"      - 処理済み: {self.processed_chunks}")
+            print(f"      - S3保存済み: {self.saved_chunks}")
+            if self.saved_chunks < self.total_chunks:
+                skipped = self.total_chunks - self.saved_chunks
+                print(f"      - スキップ: {skipped} (エラーまたは無効なデータ)")
+
         return total_added
+
+    def reset_counters(self):
+        """進捗カウンターをリセット（新しいプロジェクト開始時用）"""
+        self.total_chunks = 0
+        self.processed_chunks = 0
+        self.saved_chunks = 0
 
 
 def _process_single_file_optimized(
@@ -1530,6 +1575,9 @@ def main():
         print(f"プロジェクト: {project_name}")
         print(f"Google Driveフォルダ数: {len(project_folders)}")
         print(f"{'=' * 50}")
+
+        # プロジェクトごとに進捗カウンターをリセット
+        vector_db.reset_counters()
 
         # 全フォルダからファイル一覧を取得
         all_files = []

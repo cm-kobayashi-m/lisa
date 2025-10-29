@@ -7,57 +7,57 @@
 # 3. 不要なデータソースは削除可能
 
 projects:
-  # プロジェクト名（任意の名前を設定）
-  H2Oリテイリング:
-    google_drive:
-      - "12gYwdVKAko9gD_4wbpw6wlanj4vAE71N"
-    slack:
-    backlog:
-
-  デロイトトーマツ:
-    google_drive:
-      - "15oIZ57lYqfCd8KSZGGpom6c0AshOlwGq"
-
-  ヤーマン:
-    google_drive:
-      - "1WM6V92h18J7ZyOcxFLx5nLLi3vGYxU3v"
-
-  ダイコク電機:
-    google_drive:
-      - "1HtV2NWaoz4HlZVVCrypFqYrHWN1D880u"
-
-  MUJI-良品計画:
-    google_drive:
-      - "1GwPYXUjLZwzvB4T2mhvpFOOHWQqhzGGY"
-
-  TOYOTA-自動車:
-    google_drive:
-      - "1ogQMydpvRl38-WOTcpg3RbwgT0fCH8-f"
-
-  日本酒類:
-    google_drive:
-      - "1MpMfW_5mEHJkPjtlTgyglb5EYFEih2Uc"
+#  # プロジェクト名（任意の名前を設定）
+#  H2Oリテイリング:
+#    google_drive:
+#      - "12gYwdVKAko9gD_4wbpw6wlanj4vAE71N"
+#    slack:
+#    backlog:
+#
+#  デロイトトーマツ:
+#    google_drive:
+#      - "15oIZ57lYqfCd8KSZGGpom6c0AshOlwGq"
+#
+#  ヤーマン:
+#    google_drive:
+#      - "1WM6V92h18J7ZyOcxFLx5nLLi3vGYxU3v"
+#
+#  ダイコク電機:
+#    google_drive:
+#      - "1HtV2NWaoz4HlZVVCrypFqYrHWN1D880u"
+#
+#  MUJI-良品計画:
+#    google_drive:
+#      - "1GwPYXUjLZwzvB4T2mhvpFOOHWQqhzGGY"
+#
+#  TOYOTA-自動車:
+#    google_drive:
+#      - "1ogQMydpvRl38-WOTcpg3RbwgT0fCH8-f"
+#
+#  日本酒類:
+#    google_drive:
+#      - "1MpMfW_5mEHJkPjtlTgyglb5EYFEih2Uc"
 
   ユニ・チャーム（CSA）:
     google_drive:
       - "17JFBa7uLGUzCjhckdpPmFpbYkavTnzSQ"
       - "1Y9aDKbWCLiAyJCNg-aHVb4TIHyrYl5ev"
 
-  SUBARU:
-    google_drive:
-      - "1IRYqUf-wpMKp450QG8-UjT7ez4miDcES"
-
-  JEDI2G:
-    google_drive:
-      - "1h8GVoMQdxPd-hhRMsyv6ayGKsNA-etpo"
-
-  ユーシーカード（CSA）:
-    google_drive:
-      - "1o4nk7FqfKFtNUvsXgi867N0Z41ATZjW-"
-
-  大正製薬（CSA）:
-    google_drive:
-      - "1Dr5Z_F7S8O1g2Esvur4QVJG19kKX4AEj"
+#  SUBARU:
+#    google_drive:
+#      - "1IRYqUf-wpMKp450QG8-UjT7ez4miDcES"
+#
+#  JEDI2G:
+#    google_drive:
+#      - "1h8GVoMQdxPd-hhRMsyv6ayGKsNA-etpo"
+#
+#  ユーシーカード（CSA）:
+#    google_drive:
+#      - "1o4nk7FqfKFtNUvsXgi867N0Z41ATZjW-"
+#
+#  大正製薬（CSA）:
+#    google_drive:
+#      - "1Dr5Z_F7S8O1g2Esvur4QVJG19kKX4AEj"
 
 # グローバルオプション設定
 options:

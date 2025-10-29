@@ -47,6 +47,8 @@
 - **時系列重み付け**: 最新情報を優先的に検索
 - **バッチ処理最適化**: 埋め込み生成とS3保存の並列処理
 - **インテリジェントキャッシュ**: 処理済みファイルの自動スキップ
+- **RAG-Fusion**: 複数クエリによる並行検索とRRF（Reciprocal Rank Fusion）統合
+- **CRAG（Corrective RAG）**: 関連性評価と適応的検索戦略（実装済み、オプション）
 
 ### 📁 マルチデータソース対応
 - **Google Drive**: 複数フォルダからの一括取得（実装済み）
@@ -146,6 +148,17 @@ ENABLE_REFLECTION_REFINEMENT=true  # 再生成を有効化（true/false）
 RAG_REFINEMENT_K_CURRENT=20        # 再検索時：現在のプロジェクトから取得
 RAG_REFINEMENT_K_SIMILAR=20        # 再検索時：類似プロジェクトから取得
 RAG_REFINEMENT_MAX_TOTAL=40        # 再検索時：合計最大件数
+
+# RAG-Fusion設定（複数クエリ並行検索）
+USE_RAG_FUSION=true                 # RAG-Fusion有効化（true/false）
+RAG_FUSION_NUM_QUERIES=3            # 生成するクエリ数（デフォルト: 3）
+
+# CRAG（Corrective RAG）設定
+ENABLE_CRAG=false                   # CRAG有効化（デフォルト: false）
+CRAG_UPPER_THRESHOLD=0.5           # CORRECT判定閾値
+CRAG_LOWER_THRESHOLD=-0.5          # INCORRECT判定閾値
+USE_KNOWLEDGE_REFINEMENT=true      # Knowledge Refinement有効化
+MAX_REFINED_SEGMENTS=5              # 最大精製セグメント数
 ```
 
 ### 4. プロジェクト設定ファイルの作成
@@ -206,6 +219,12 @@ python3 generate_note.py
 
 # 特定のプロジェクトのみ処理
 python3 generate_note.py --project "プロジェクトA"
+
+# CRAG機能を有効にして実行（関連性評価＋Knowledge Refinement）
+python3 generate_note.py --enable-crag
+
+# CRAG機能を無効にして実行（明示的に無効化）
+python3 generate_note.py --disable-crag
 ```
 
 #### リフレクションノート生成の仕組み
@@ -230,7 +249,35 @@ ENABLE_REFLECTION_REFINEMENT=true   # 再生成を有効化
 ENABLE_REFLECTION_REFINEMENT=false  # 再生成を無効化（1回のみ生成）
 ```
 
-### 3. S3 Vectorsの管理
+**CRAG（Corrective RAG）機能**（オプション）:
+CRAGを有効にすると、検索結果の関連性を評価し、適応的な検索戦略を実行します：
+
+1. **関連性評価**: 検索結果を-1〜1のスコアで評価
+2. **3段階の処理**:
+   - **CORRECT（高関連性）**: Knowledge Refinementで重要情報を抽出
+   - **INCORRECT（低関連性）**: 代替検索戦略（同業界/技術スタック検索など）を実行
+   - **AMBIGUOUS（中間）**: 複数戦略を組み合わせて実行
+3. **Knowledge Refinement**: ドキュメントを意味的セグメントに分割し、関連部分のみ抽出
+
+### 3. ヒアリングシート・提案書の生成
+
+```bash
+# ヒアリングシート生成（リフレクションノートから）
+python3 generate_document.py hearing-sheet --input reflection_note.md --output hearing_sheet.md
+
+# 提案書生成（ヒアリングシートから）
+python3 generate_document.py proposal --input hearing_sheet.md --output proposal.md
+
+# CRAG機能を有効にしてドキュメント生成
+python3 generate_document.py hearing-sheet --input reflection_note.md --enable-crag
+python3 generate_document.py proposal --input hearing_sheet.md --enable-crag
+
+# 追加の指示を与えてドキュメント生成（Query Translation）
+python3 generate_document.py proposal --input reflection_note.md \
+    --additional-prompt "ヤーマン案件を参考に、期限が厳しいので精度重視で"
+```
+
+### 4. S3 Vectorsの管理
 
 ```bash
 # インデックスのみ削除
@@ -385,14 +432,19 @@ RETRY_DELAY=2
 
 ## 📊 RAG検索フローの詳細
 
-### 2段階検索アルゴリズム
+### 標準RAG検索アルゴリズム
 
 ```
 1. キーワード生成フェーズ
    プロジェクト名 → Gemini API → 関連キーワード抽出
    例: "EC売上改善" → "EC 電子商取引 売上 分析 最適化..."
 
-2. ベクトル検索フェーズ
+2. ベクトル検索フェーズ（RAG-Fusion有効時）
+   a) 複数クエリ生成（3〜5個の異なる観点のクエリ）
+   b) 各クエリで並行検索実行
+   c) RRF（Reciprocal Rank Fusion）で結果統合
+
+   標準検索時:
    a) 現在のプロジェクトから検索（k=10〜15件）
    b) キーワードで類似プロジェクトを検索
    c) 類似プロジェクトから追加検索（k=10〜15件）
@@ -401,6 +453,32 @@ RETRY_DELAY=2
    - コサイン類似度: 0.8 (80%)
    - 時系列スコア: 0.2 (20%)
    → ハイブリッドスコア = 0.8 × 類似度 + 0.2 × 時間スコア
+```
+
+### CRAG（Corrective RAG）フロー（オプション）
+
+```
+1. 初回検索 → 関連性評価（-1〜1スコア）
+
+2. 関連性レベルに応じた処理:
+
+   [CORRECT: 0.5以上]
+   └→ Knowledge Refinement
+      - ドキュメントをセグメント分割
+      - 関連セグメントのみ抽出
+
+   [INCORRECT: -0.5以下]
+   └→ 代替検索戦略
+      - 同一プロジェクト詳細検索
+      - 同業界類似プロジェクト検索
+      - 同一技術スタック検索
+      - 抽象概念での全体検索
+
+   [AMBIGUOUS: -0.5〜0.5]
+   └→ 複数戦略の組み合わせ
+      - 標準検索 + 部分的な代替戦略
+
+3. 最終結果の統合と重複除去
 ```
 
 ### ハイブリッドスコアリング方式
@@ -469,6 +547,12 @@ RETRY_DELAY=2
 
 ## 📚 参考資料
 
+### プロジェクト内ドキュメント
+- [RAG技術手法詳細](RAG_TECHNICH.md) - RAGシステムの技術実装詳細
+- [CRAG実装レポート](CRAG_IMPLEMENTATION.md) - CRAG機能の実装内容
+- [CRAG統合サマリー](CRAG_INTEGRATION_SUMMARY.md) - CRAG統合の概要
+
+### 外部ドキュメント
 - [Google Gemini API Documentation](https://ai.google.dev/docs)
 - [AWS S3 Vectors Preview](https://aws.amazon.com/s3/features/s3-express-one-zone/)
 - [Unstructured.io Documentation](https://unstructured-io.github.io/unstructured/)

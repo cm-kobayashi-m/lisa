@@ -26,6 +26,13 @@ from rag.embeddings import GeminiEmbeddings
 from rag.rag_retriever import RAGRetriever
 from rag.rag_fusion import rag_fusion_search
 
+# CRAG機能のインポート（オプション）
+try:
+    from rag.enhanced_rag_search import create_enhanced_rag_search, EnhancedRAGConfig
+    CRAG_AVAILABLE = True
+except ImportError:
+    CRAG_AVAILABLE = False
+
 
 class ProposalGenerator:
     """ヒアリングシート/リフレクションノート → 提案書生成"""
@@ -35,7 +42,8 @@ class ProposalGenerator:
         vector_store: S3VectorStore,
         embeddings: GeminiEmbeddings,
         llm: Optional[ChatGoogleGenerativeAI] = None,
-        template_path: Optional[str] = None
+        template_path: Optional[str] = None,
+        enable_crag: bool = False
     ):
         """
         Args:
@@ -43,10 +51,26 @@ class ProposalGenerator:
             embeddings: GeminiEmbeddingsインスタンス
             llm: LLMインスタンス（Noneの場合は自動生成）
             template_path: テンプレートファイルパス（Noneの場合はデフォルト使用）
+            enable_crag: CRAG機能を有効にするか
         """
         self.vector_store = vector_store
         self.embeddings = embeddings
         self.retriever = RAGRetriever(vector_store, embeddings)
+        self.enable_crag = enable_crag and CRAG_AVAILABLE
+
+        # CRAG機能の初期化
+        if self.enable_crag:
+            config = EnhancedRAGConfig(
+                use_crag=True,
+                use_knowledge_refinement=True,
+                min_score=float(os.getenv('RAG_MIN_SCORE', '0.3'))
+            )
+            # Geminiクライアントは後で初期化するのでここではNoneを渡す
+            self.enhanced_search = None
+            self.crag_config = config
+        else:
+            self.enhanced_search = None
+            self.crag_config = None
 
         # API KEY取得
         api_key = os.getenv("GEMINI_API_KEY")
@@ -67,6 +91,15 @@ class ProposalGenerator:
 
         # Gemini APIクライアント初期化（RAG-Fusion用）
         self.gemini_client = genai.Client(api_key=api_key)
+
+        # CRAG enhanced_searchを今初期化
+        if self.enable_crag:
+            self.enhanced_search = create_enhanced_rag_search(
+                self.retriever,
+                self.embeddings,
+                self.gemini_client,
+                self.crag_config
+            )
 
         # テンプレート読み込み
         if template_path:
@@ -201,10 +234,34 @@ JSON形式のみを出力してください（説明や追加テキストは不�
             # 従来通りの処理
             base_query = f"提案書 {source_document[:300]}"
 
-        # RAG-Fusion有効化フラグ
-        use_rag_fusion = os.getenv('USE_RAG_FUSION', 'true').lower() == 'true'
+        # CRAGが有効な場合はCRAGを使用
+        if self.enable_crag and self.enhanced_search:
+            print(f"    [CRAG] 関連性評価付きで提案書検索中（k={k}）...")
 
-        if use_rag_fusion and project_name:
+            # CRAGで拡張検索を実行
+            crag_results = self.enhanced_search.search_with_enhancements(
+                query=base_query,
+                project_name=project_name or "",
+                k_current=k,
+                k_similar=k
+            )
+
+            # 結果を統合（現在のプロジェクトと類似プロジェクト）
+            results = []
+            for doc, dist in crag_results.get("current_project_results", []):
+                results.append((doc, dist))
+            for doc, dist in crag_results.get("similar_project_results", []):
+                results.append((doc, dist))
+
+            # 精製されたドキュメントがあれば優先
+            if crag_results.get("refined_documents"):
+                print(f"    [CRAG] {len(crag_results['refined_documents'])}件の精製済みドキュメント")
+
+            print(f"    [CRAG] 関連性レベル: {crag_results.get('relevance_level', 'unknown')}")
+            print(f"    [CRAG] {len(results)}件の提案書を発見")
+
+        # RAG-Fusion有効化フラグ
+        elif os.getenv('USE_RAG_FUSION', 'true').lower() == 'true' and project_name:
             print(f"    [RAG-Fusion] 提案書検索中（k={k}）...")
 
             # RAG-Fusionで検索（Query Translationの結果を使用）
@@ -472,6 +529,25 @@ JSON形式のみを出力してください。
                 "qa_items": ""
             }
 
+    def _format_value(self, value):
+        """
+        値を文字列形式にフォーマット
+        リストの場合は改行で結合、それ以外はそのまま文字列化
+
+        Args:
+            value: フォーマットする値（文字列、リスト、または任意の型）
+
+        Returns:
+            フォーマットされた文字列
+        """
+        if isinstance(value, list):
+            # リストの場合は改行で結合
+            return "\n  ".join(str(item) for item in value)
+        elif value is None:
+            return "未設定"
+        else:
+            return str(value)
+
     def _generate_proposal_with_llm(
         self,
         project_info: Dict[str, str],
@@ -569,32 +645,32 @@ JSON形式のみを出力してください。
 - 顧客名: {project_info.get("customer_name", "未設定")}
 - 業界: {project_info.get("industry", "未設定")}
 - 現状: {project_info.get("current_situation", "未設定")}
-- 課題: {project_info.get("challenges", "未設定")}
+- 課題: {self._format_value(project_info.get("challenges", "未設定"))}
 - 影響: {project_info.get("impact", "未設定")}
 
 ## ソリューション提案
-- エグゼクティブサマリー: {solution.get("executive_summary", "未設定")}
-- ソリューション概要: {solution.get("solution_overview", "未設定")}
-- 提案機能: {solution.get("proposed_features", "未設定")}
-- アーキテクチャ: {solution.get("architecture", "未設定")}
-- 技術スタック: {solution.get("technology_stack", "未設定")}
-- 期待される効果: {solution.get("expected_benefits", "未設定")}
-- ROI分析: {solution.get("roi_analysis", "未設定")}
+- エグゼクティブサマリー: {self._format_value(solution.get("executive_summary", "未設定"))}
+- ソリューション概要: {self._format_value(solution.get("solution_overview", "未設定"))}
+- 提案機能: {self._format_value(solution.get("proposed_features", "未設定"))}
+- アーキテクチャ: {self._format_value(solution.get("architecture", "未設定"))}
+- 技術スタック: {self._format_value(solution.get("technology_stack", "未設定"))}
+- 期待される効果: {self._format_value(solution.get("expected_benefits", "未設定"))}
+- ROI分析: {self._format_value(solution.get("roi_analysis", "未設定"))}
 
 ## プロジェクト計画
-- プロジェクト体制: {plan.get("project_structure", "未設定")}
-- スケジュール: {plan.get("schedule", "未設定")}
-- マイルストーン: {plan.get("milestones", "未設定")}
+- プロジェクト体制: {self._format_value(plan.get("project_structure", "未設定"))}
+- スケジュール: {self._format_value(plan.get("schedule", "未設定"))}
+- マイルストーン: {self._format_value(plan.get("milestones", "未設定"))}
 
 ## 費用見積
-- 費用内訳: {cost.get("cost_breakdown", "未設定")}
-- 支払条件: {cost.get("payment_terms", "未設定")}
+- 費用内訳: {self._format_value(cost.get("cost_breakdown", "未設定"))}
+- 支払条件: {self._format_value(cost.get("payment_terms", "未設定"))}
 
 ## リスクと対策
-- 想定リスク: {risks.get("risks", "未設定")}
-- リスク軽減策: {risks.get("risk_mitigation", "未設定")}
-- 次のステップ: {risks.get("next_steps", "未設定")}
-- Q&A項目: {risks.get("qa_items", "未設定")}
+- 想定リスク: {self._format_value(risks.get("risks", "未設定"))}
+- リスク軽減策: {self._format_value(risks.get("risk_mitigation", "未設定"))}
+- 次のステップ: {self._format_value(risks.get("next_steps", "未設定"))}
+- Q&A項目: {self._format_value(risks.get("qa_items", "未設定"))}
 
 ## 類似案件実績
 {similar_cases_text}

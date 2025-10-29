@@ -196,7 +196,7 @@ def main():
     parser.add_argument(
         "--query",
         type=str,
-        default="アーキテクチャについて教えてください",
+        default="ヒアリングシート",
         help="検索クエリテキスト"
     )
     parser.add_argument(

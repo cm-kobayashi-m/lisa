@@ -124,6 +124,8 @@ def translate_query_with_context(
         )
 
         # JSON解析
+        if not response or not response.text:
+            raise ValueError("Gemini APIから有効なレスポンスが返されませんでした")
         content = response.text.strip()
 
         # コードブロック除去
@@ -163,7 +165,7 @@ def translate_query_with_context(
         }
 
 
-def extract_project_names(text: str) -> List[str]:
+def extract_project_names(text: Optional[str]) -> List[str]:
     """
     テキストからプロジェクト名を簡易的に抽出（フォールバック用）
 
@@ -173,6 +175,9 @@ def extract_project_names(text: str) -> List[str]:
     Returns:
         抽出されたプロジェクト名のリスト
     """
+    if not text:
+        return []
+
     projects = []
 
     # パターンマッチングで抽出
@@ -191,7 +196,7 @@ def extract_project_names(text: str) -> List[str]:
     return list(set(projects))
 
 
-def detect_priority(text: str) -> str:
+def detect_priority(text: Optional[str]) -> str:
     """
     テキストから優先事項を簡易的に検出（フォールバック用）
 
@@ -201,6 +206,9 @@ def detect_priority(text: str) -> str:
     Returns:
         優先事項の文字列
     """
+    if not text:
+        return "バランス"
+
     # キーワードベースの判定
     if any(word in text for word in ["精度", "正確", "詳細", "高品質"]):
         return "精度重視"

@@ -40,7 +40,7 @@ class GeminiEmbeddings:
     Gemini Embeddings API を使用したテキスト埋め込み
 
     特徴:
-    - 768次元のベクトル生成（デフォルト）
+    - 1536次元のベクトル生成（デフォルト、768まで任意指定可能）
     - 多言語対応
     - 高品質な意味的表現
     """
@@ -49,7 +49,7 @@ class GeminiEmbeddings:
         self,
         api_key: Optional[str] = None,
         model_name: str = "models/text-embedding-004",
-        dimension: int = 768,
+        dimension: int = 1536,
         batch_size: int = 100
     ):
         """
@@ -58,7 +58,7 @@ class GeminiEmbeddings:
         Args:
             api_key: Gemini API キー（環境変数から取得可能）
             model_name: 使用する埋め込みモデル
-            dimension: ベクトルの次元数（768推奨）
+            dimension: ベクトルの次元数（1536推奨、768まで任意指定可能）
             batch_size: バッチ処理のサイズ
         """
         # APIキーの取得

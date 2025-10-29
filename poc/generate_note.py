@@ -24,6 +24,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 # Gemini API (新SDK)
 from google import genai
 
+from improved_prompts import get_final_reflection_prompt
+
 # プロジェクト設定
 from project_config import ProjectConfig
 
@@ -34,6 +36,18 @@ DIMENSION = int(os.getenv('DIMENSION', 1536))
 
 # 環境変数読み込み
 load_dotenv()
+
+# CRAG機能のインポート（オプション）
+try:
+    from rag.enhanced_rag_search import (
+        create_enhanced_rag_search,
+        EnhancedRAGConfig,
+        integrate_with_generate_note as crag_integrate_with_generate_note
+    )
+    CRAG_AVAILABLE = True
+except ImportError:
+    CRAG_AVAILABLE = False
+    print("[INFO] CRAG機能は利用できません（enhanced_rag_searchモジュールが見つかりません）")
 
 
 
@@ -1108,7 +1122,6 @@ def regenerate_reflection_note(
     Returns:
         再生成されたリフレクションノート
     """
-    from improved_prompts import get_final_reflection_prompt
 
     # 初回ノートの参考情報を追加
     reference_section = f"""
@@ -1178,7 +1191,8 @@ def regenerate_reflection_note(
 def generate_final_reflection_note_v2(
     client: genai.Client,
     project_name: str,
-    enable_refinement: bool = None
+    enable_refinement: bool = None,
+    enable_crag: bool = None
 ) -> tuple[str, str]:
     """
     改良版：初回生成 + 分析 + 再生成を行う
@@ -1188,6 +1202,7 @@ def generate_final_reflection_note_v2(
         project_name: プロジェクト名
         enable_refinement: Trueの場合は再生成を実行、Falseの場合は1回のみ。
                           Noneの場合は環境変数から取得
+        enable_crag: CRAGを有効にするか（None: 環境変数から取得）
 
     Returns:
         (最終的なリフレクションノート, サマリーテキスト)
@@ -1195,7 +1210,7 @@ def generate_final_reflection_note_v2(
     # === Phase 1: 初回生成（現状の処理） ===
     print(f"[INFO] === Phase 1: 初回リフレクションノート生成 ===")
     initial_note, initial_summaries = generate_final_reflection_note(
-        client, project_name
+        client, project_name, enable_crag=enable_crag
     )
 
     # 再生成フラグの決定
@@ -1284,16 +1299,36 @@ def generate_final_reflection_note_v2(
         f" - {retry_state.next_action.sleep}秒待機してリトライします..."
     )
 )
-def generate_final_reflection_note(client: genai.Client, project_name: str) -> tuple[str, str]:
+def generate_final_reflection_note(client: genai.Client, project_name: str, enable_crag: bool = None) -> tuple[str, str]:
     """RAGインデックスから最終的なリフレクションノートを生成（RAG専用版）
 
     Args:
         client: Gemini APIクライアント
         project_name: プロジェクト名
+        enable_crag: CRAGを有効にするか（None: 環境変数から取得、True/False: 明示的に指定）
 
     Returns:
         (リフレクションノート, サマリーテキスト)
     """
+
+    # CRAGの有効化判定
+    if enable_crag is None:
+        enable_crag = os.getenv('ENABLE_CRAG', 'false').lower() == 'true'
+
+    # CRAGが利用可能で有効な場合は、CRAGを使用
+    if CRAG_AVAILABLE and enable_crag:
+        print(f"[INFO] === CRAG機能を使用したRAG検索を実行中 ===")
+        try:
+            # CRAGを使用したリフレクションノート生成
+            note, rag_context = crag_integrate_with_generate_note(
+                client,
+                project_name,
+                enable_crag=True
+            )
+            return note, rag_context
+        except Exception as e:
+            print(f"[WARN] CRAG実行中にエラーが発生、通常のRAG検索にフォールバック: {e}")
+            # エラー時は通常のRAG検索に継続
 
     # RAGから過去の類似プロジェクト情報を取得（2段階検索）
     rag_context = ""
@@ -1543,8 +1578,6 @@ def generate_final_reflection_note(client: genai.Client, project_name: str) -> t
         traceback.print_exc()
         # RAGが失敗しても処理は継続
 
-    # 改善版のプロンプトを使用
-    from improved_prompts import get_final_reflection_prompt
 
     # RAG専用モード: RAGコンテキストのみ
     summaries_text = rag_context if rag_context else "情報がありません。"
@@ -1899,7 +1932,7 @@ def save_tags(project_name: str, tags_data: Dict):
 
 
 
-def process_project_only_rag(client: genai.Client, project: Dict[str, str]) -> bool:
+def process_project_only_rag(client: genai.Client, project: Dict[str, str], enable_crag: bool = None) -> bool:
     """1つの案件を処理（RAG専用モード）
 
     RAGインデックスからのみ情報を取得してリフレクションノートを生成します。
@@ -1907,6 +1940,7 @@ def process_project_only_rag(client: genai.Client, project: Dict[str, str]) -> b
     Args:
         client: Gemini APIクライアント
         project: プロジェクト情報 {'name': str, 'id': str}
+        enable_crag: CRAGを有効にするか（None: 環境変数から取得）
 
     Returns:
         処理成功時True、失敗時False
@@ -1915,12 +1949,21 @@ def process_project_only_rag(client: genai.Client, project: Dict[str, str]) -> b
 
     print(f"\n[INFO] === {project_name} の処理開始（RAG専用モード） ===")
 
+    # CRAGの有効/無効を表示
+    if enable_crag is None:
+        enable_crag = os.getenv('ENABLE_CRAG', 'false').lower() == 'true'
+    if CRAG_AVAILABLE and enable_crag:
+        print(f"[INFO] CRAG機能: 有効")
+    else:
+        print(f"[INFO] CRAG機能: 無効")
+
     try:
         # 最終的なリフレクションノート生成（RAG専用 + 再生成）
         print(f"\n[INFO] === RAGからリフレクションノート生成中 ===")
         reflection_note, summaries_text = generate_final_reflection_note_v2(
             client,
-            project_name
+            project_name,
+            enable_crag=enable_crag
         )
 
         # 保存
@@ -1957,7 +2000,17 @@ def main():
     parser = argparse.ArgumentParser(description="リフレクションノート自動生成")
     parser.add_argument("--project", type=str, help="特定のプロジェクトのみ処理")
     parser.add_argument("--config", type=str, default="project_config.yaml", help="設定ファイルのパス")
+    parser.add_argument("--enable-crag", action="store_true", help="CRAG機能を有効にする")
+    parser.add_argument("--disable-crag", action="store_true", help="CRAG機能を無効にする")
     args = parser.parse_args()
+
+    # CRAG有効/無効の決定
+    enable_crag = None
+    if args.enable_crag:
+        enable_crag = True
+    elif args.disable_crag:
+        enable_crag = False
+    # それ以外はNone（環境変数から取得）
 
     # 環境変数チェック
     api_key = os.getenv('GEMINI_API_KEY')
@@ -2012,7 +2065,7 @@ def main():
     fail_count = 0
 
     for project in target_projects:
-        result = process_project_only_rag(gemini_client, project)
+        result = process_project_only_rag(gemini_client, project, enable_crag=enable_crag)
         if result:
             success_count += 1
         else:

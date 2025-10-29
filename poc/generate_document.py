@@ -35,6 +35,17 @@ from rag.embeddings import GeminiEmbeddings
 from generators.hearing_sheet_generator import HearingSheetGenerator
 from generators.proposal_generator import ProposalGenerator
 
+# CRAG機能のインポート（オプション）
+try:
+    from rag.enhanced_rag_search import (
+        create_enhanced_rag_search,
+        EnhancedRAGConfig
+    )
+    CRAG_AVAILABLE = True
+except ImportError:
+    CRAG_AVAILABLE = False
+    print("[INFO] CRAG機能は利用できません（enhanced_rag_searchモジュールが見つかりません）")
+
 
 def load_source_document(input_path: Optional[str] = None) -> str:
     """
@@ -73,9 +84,15 @@ def save_document(content: str, output_path: Optional[str] = None) -> None:
         print(content)
 
 
-def generate_hearing_sheet(args, vector_store, embeddings):
+def generate_hearing_sheet(args, vector_store, embeddings, enable_crag=False):
     """ヒアリングシート生成（Query Translation対応版）"""
     print("[INFO] ヒアリングシート生成モード")
+
+    # CRAG機能の状態を表示
+    if CRAG_AVAILABLE and enable_crag:
+        print("[INFO] CRAG機能: 有効")
+    else:
+        print("[INFO] CRAG機能: 無効")
 
     # 追加プロンプト情報の表示
     if hasattr(args, 'additional_prompt') and args.additional_prompt:
@@ -86,7 +103,8 @@ def generate_hearing_sheet(args, vector_store, embeddings):
     generator = HearingSheetGenerator(
         vector_store=vector_store,
         embeddings=embeddings,
-        template_path=args.template
+        template_path=args.template,
+        enable_crag=enable_crag  # CRAG有効化フラグを渡す
     )
 
     # プロジェクト情報のオーバーライド
@@ -112,9 +130,15 @@ def generate_hearing_sheet(args, vector_store, embeddings):
     )
 
 
-def generate_proposal(args, vector_store, embeddings):
+def generate_proposal(args, vector_store, embeddings, enable_crag=False):
     """提案書生成（Query Translation対応版）"""
     print("[INFO] 提案書生成モード")
+
+    # CRAG機能の状態を表示
+    if CRAG_AVAILABLE and enable_crag:
+        print("[INFO] CRAG機能: 有効")
+    else:
+        print("[INFO] CRAG機能: 無効")
 
     # 追加プロンプト情報の表示
     if hasattr(args, 'additional_prompt') and args.additional_prompt:
@@ -125,7 +149,8 @@ def generate_proposal(args, vector_store, embeddings):
     generator = ProposalGenerator(
         vector_store=vector_store,
         embeddings=embeddings,
-        template_path=args.template
+        template_path=args.template,
+        enable_crag=enable_crag  # CRAG有効化フラグを渡す
     )
 
     # プロジェクト情報のオーバーライド
@@ -229,6 +254,18 @@ def main():
             help='追加の指示やコンテキスト（例: "ヤーマン案件を参考に、期限が厳しいので精度重視で"）'
         )
 
+        # CRAG機能オプション
+        subparser.add_argument(
+            '--enable-crag',
+            action='store_true',
+            help='CRAG機能を有効にする（関連性評価とKnowledge Refinement）'
+        )
+        subparser.add_argument(
+            '--disable-crag',
+            action='store_true',
+            help='CRAG機能を無効にする'
+        )
+
         # テンプレートオプション
         subparser.add_argument(
             '--template',
@@ -254,6 +291,16 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # CRAG有効/無効の決定
+    enable_crag = False
+    if hasattr(args, 'enable_crag') and args.enable_crag:
+        enable_crag = True
+    elif hasattr(args, 'disable_crag') and args.disable_crag:
+        enable_crag = False
+    else:
+        # 環境変数から取得
+        enable_crag = os.getenv('ENABLE_CRAG', 'false').lower() == 'true'
 
     # 環境変数チェック
     if not os.getenv("GEMINI_API_KEY"):
@@ -285,7 +332,7 @@ def main():
 
         embeddings = GeminiEmbeddings(
             api_key=os.getenv("GEMINI_API_KEY"),
-            model_name=os.getenv("GEMINI_EMBEDDING_MODEL", "models/text-embedding-004")
+            model_name=os.getenv("EMBEDDING_MODEL", "models/text-embedding-004")
         )
 
         vector_store = S3VectorStore(
@@ -299,9 +346,9 @@ def main():
 
         # 3-4. ドキュメント生成（サブコマンドに応じて分岐）
         if args.document_type in ['hearing-sheet', 'hs']:
-            document = generate_hearing_sheet(args, vector_store, embeddings)
+            document = generate_hearing_sheet(args, vector_store, embeddings, enable_crag)
         elif args.document_type in ['proposal', 'prop']:
-            document = generate_proposal(args, vector_store, embeddings)
+            document = generate_proposal(args, vector_store, embeddings, enable_crag)
         else:
             print(f"[ERROR] 未知のドキュメントタイプ: {args.document_type}", file=sys.stderr)
             sys.exit(1)
