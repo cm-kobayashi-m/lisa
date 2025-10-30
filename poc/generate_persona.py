@@ -952,7 +952,7 @@ Q: そこから得た「チェックポイント」は？
             config={
                 'temperature': 0.7,
                 'top_p': 0.95,
-                'max_output_tokens': 8192,
+                'max_output_tokens': 32768,  # 最大トークン数を増やして完全なペルソナを生成
             }
         )
 

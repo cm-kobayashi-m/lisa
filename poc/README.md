@@ -195,6 +195,31 @@ Google DriveフォルダIDの取得方法:
 
 ## 使用方法
 
+### 0. 生のヒアリングデータから個人ペルソナを生成（新機能）
+
+個人へのヒアリング結果から構造化されたペルソナを生成します。この機能により、暗黙知を明示的な判断基準に変換します。
+
+```bash
+# 全ての raw_hearing ファイルを処理
+python3 process_raw_hearing.py
+
+# 特定の人のみ処理
+python3 process_raw_hearing.py --person "安達さん"
+
+# 既存ファイルを上書きして再生成
+python3 process_raw_hearing.py --force
+```
+
+**ワークフロー**:
+1. `ドキュメント/raw_hearing/` に生のヒアリングデータ（`名前.md`）を配置
+2. `process_raw_hearing.py` を実行して個人ペルソナを生成
+3. 生成されたペルソナは `ドキュメント/hearing/` に保存される
+4. `generate_persona.py` を実行して統合ペルソナを生成
+
+**プロンプトカスタマイズ**:
+個人ペルソナ分析用のプロンプトは `prompts/individual_persona_template.md` で管理されています。
+組織のニーズに応じてカスタマイズ可能です。
+
 ### 1. RAGインデックスの構築（初回および更新時）
 
 ```bash

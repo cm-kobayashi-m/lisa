@@ -168,3 +168,4 @@ poc/credentials.json
 poc/token.yaml
 poc/outputs
 /ドキュメント/hearing/*
+/ドキュメント/raw_hearing/
