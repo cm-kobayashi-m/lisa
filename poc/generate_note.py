@@ -1617,6 +1617,15 @@ def save_reflection_note(project_name: str, content: str, summaries_text: str = 
     model_short = model_name.replace('.', '-')
 
     note_file = output_path / f"{dt}_{model_short}_reflection_note.md"
+
+    # '---' より前を削除し、'---' 自体も含めない
+    marker = '---'
+    if isinstance(content, str):
+        idx = content.find(marker)
+        if idx != -1:
+            # '---' 自体を除外して残す
+            content = content[idx + len(marker):].lstrip('\r\n')
+
     with open(note_file, 'w', encoding='utf-8') as f:
         f.write(content)
 
