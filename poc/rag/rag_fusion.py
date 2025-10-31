@@ -267,7 +267,7 @@ def generate_multiple_queries(
             config={
                 'temperature': 0.8,  # 多様性を高める
                 'top_p': 0.95,
-                'max_output_tokens': 512,
+                'max_output_tokens': 8192,
             }
         )
 

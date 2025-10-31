@@ -49,8 +49,8 @@ def translate_query_with_context(
     # 追加プロンプトがない場合はデフォルトの処理
     if not additional_prompt:
         return {
-            "primary_query": source_document[:200],
-            "alternative_queries": [source_document[:150]],
+            "primary_query": source_document,
+            "alternative_queries": [source_document],
             "reference_projects": [],
             "search_strategy": "標準的な検索戦略",
             "priority": "バランス重視",
@@ -66,7 +66,7 @@ def translate_query_with_context(
 以下の追加指示と元のドキュメントから、RAG検索で最も効果的な検索クエリと検索戦略を生成してください。
 
 ## 元のドキュメント（冒頭部分）
-{source_document[:1500]}
+{source_document}
 
 ## ユーザーからの追加指示
 {additional_prompt}
@@ -119,7 +119,7 @@ def translate_query_with_context(
             contents=prompt,
             config={
                 'temperature': 0.3,  # 安定した出力のため低め
-                'max_output_tokens': 1024,
+                'max_output_tokens': 8192,
             }
         )
 
@@ -152,8 +152,8 @@ def translate_query_with_context(
         priority = detect_priority(additional_prompt)
 
         return {
-            "primary_query": source_document[:200],
-            "alternative_queries": [source_document[:150]],
+            "primary_query": source_document,
+            "alternative_queries": [source_document],
             "reference_projects": reference_projects,
             "search_strategy": f"フォールバック戦略（{priority}）",
             "priority": priority,

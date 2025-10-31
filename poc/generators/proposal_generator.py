@@ -24,14 +24,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from rag.vector_store import S3VectorStore, Document
 from rag.embeddings import GeminiEmbeddings
 from rag.rag_retriever import RAGRetriever
-from rag.rag_fusion import rag_fusion_search
+from rag.rag_fusion import rag_fusion_search, apply_hybrid_scoring
 
 # CRAG機能のインポート（オプション）
-try:
-    from rag.enhanced_rag_search import create_enhanced_rag_search, EnhancedRAGConfig
-    CRAG_AVAILABLE = True
-except ImportError:
-    CRAG_AVAILABLE = False
+from rag.enhanced_rag_search import create_enhanced_rag_search, EnhancedRAGConfig
 
 
 class ProposalGenerator:
@@ -56,7 +52,7 @@ class ProposalGenerator:
         self.vector_store = vector_store
         self.embeddings = embeddings
         self.retriever = RAGRetriever(vector_store, embeddings)
-        self.enable_crag = enable_crag and CRAG_AVAILABLE
+        self.enable_crag = enable_crag
 
         # CRAG機能の初期化
         if self.enable_crag:
@@ -232,7 +228,7 @@ JSON形式のみを出力してください（説明や追加テキストは不�
             print(f"    [Query Translation] 検索クエリ: {base_query[:50]}...")
         else:
             # 従来通りの処理
-            base_query = f"提案書 {source_document[:300]}"
+            base_query = f"提案書を作成します。案件情報は次の通り。 {source_document[:300]}"
 
         # CRAGが有効な場合はCRAGを使用
         if self.enable_crag and self.enhanced_search:
@@ -264,19 +260,50 @@ JSON形式のみを出力してください（説明や追加テキストは不�
         elif os.getenv('USE_RAG_FUSION', 'true').lower() == 'true' and project_name:
             print(f"    [RAG-Fusion] 提案書検索中（k={k}）...")
 
-            # RAG-Fusionで検索（Query Translationの結果を使用）
-            results = rag_fusion_search(
+            # 元のproject_nameを退避（Query Translationで上書きされるため）
+            orig_project = project_name
+
+            # k分割（現在プロジェクト:類似プロジェクト = ratio:1-ratio）
+            ratio = float(os.getenv('RAG_FUSION_CURRENT_RATIO', '0.5'))
+            k_current = max(1, int(k * ratio))
+            k_similar = max(0, k - k_current)
+
+            # 現在のプロジェクトから検索
+            current_results = rag_fusion_search(
                 client=self.gemini_client,
                 retriever=self.retriever,
                 project_name=project_name,
                 base_query=base_query,  # Query Translation済みのクエリを使用
-                k=k,
+                k=k_current,
                 num_queries=int(os.getenv('RAG_FUSION_NUM_QUERIES', '3')),
                 min_score=float(os.getenv('RAG_ONLY_MODE_MIN_SCORE', '0.3')),
                 apply_time_weighting=True
             )
 
-            print(f"    [RAG-Fusion] {len(results)}件の提案書を発見")
+            # 他プロジェクトの類似案件から検索
+            similar_results = self.retriever.get_cross_project_insights(
+                query=base_query,
+                exclude_project=orig_project,
+                k=k_similar
+            )
+
+            # マージして再スコアリング
+            all_results = list(current_results) + list(similar_results)
+
+            scoring_method = os.getenv('RAG_SCORING_METHOD', 'hybrid')
+            time_weight = float(os.getenv('RAG_TIME_WEIGHT', '0.2'))
+            decay_days = int(os.getenv('RAG_DECAY_DAYS', '90'))
+
+            all_results = apply_hybrid_scoring(
+                all_results,
+                scoring_method,
+                time_weight,
+                decay_days
+            )
+
+            results = all_results[:k]
+
+            print(f"    [RAG-Fusion] {len(current_results)}件(現在) + {len(similar_results)}件(類似) = 計{len(results)}件の提案書を発見")
         else:
             print(f"    [従来検索] 提案書検索中（k={k}）...")
 

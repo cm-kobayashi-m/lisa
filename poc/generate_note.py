@@ -37,20 +37,12 @@ DIMENSION = int(os.getenv('DIMENSION', 1536))
 # 環境変数読み込み
 load_dotenv()
 
-# CRAG機能のインポート（オプション）
-try:
-    from rag.enhanced_rag_search import (
-        create_enhanced_rag_search,
-        EnhancedRAGConfig,
-        integrate_with_generate_note as crag_integrate_with_generate_note
-    )
-    CRAG_AVAILABLE = True
-except ImportError:
-    CRAG_AVAILABLE = False
-    print("[INFO] CRAG機能は利用できません（enhanced_rag_searchモジュールが見つかりません）")
-
-
-
+# CRAG機能のインポート
+from rag.enhanced_rag_search import (
+    create_enhanced_rag_search,
+    EnhancedRAGConfig,
+    integrate_with_generate_note as crag_integrate_with_generate_note
+)
 
 
 class GeminiQuotaError(Exception):
@@ -1316,7 +1308,7 @@ def generate_final_reflection_note(client: genai.Client, project_name: str, enab
         enable_crag = os.getenv('ENABLE_CRAG', 'false').lower() == 'true'
 
     # CRAGが利用可能で有効な場合は、CRAGを使用
-    if CRAG_AVAILABLE and enable_crag:
+    if enable_crag:
         print(f"[INFO] === CRAG機能を使用したRAG検索を実行中 ===")
         try:
             # CRAGを使用したリフレクションノート生成
@@ -1961,7 +1953,7 @@ def process_project_only_rag(client: genai.Client, project: Dict[str, str], enab
     # CRAGの有効/無効を表示
     if enable_crag is None:
         enable_crag = os.getenv('ENABLE_CRAG', 'false').lower() == 'true'
-    if CRAG_AVAILABLE and enable_crag:
+    if enable_crag:
         print(f"[INFO] CRAG機能: 有効")
     else:
         print(f"[INFO] CRAG機能: 無効")

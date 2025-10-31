@@ -587,7 +587,7 @@ class OptimizedChunker:
                 model=model_name,
                 google_api_key=api_key,
                 temperature=0.1,  # 低めの温度で正確性重視
-                max_output_tokens=4096,
+                max_output_tokens=8192,
             )
 
             # OCRプロンプト

@@ -36,15 +36,10 @@ from generators.hearing_sheet_generator import HearingSheetGenerator
 from generators.proposal_generator import ProposalGenerator
 
 # CRAG機能のインポート（オプション）
-try:
-    from rag.enhanced_rag_search import (
+from rag.enhanced_rag_search import (
         create_enhanced_rag_search,
         EnhancedRAGConfig
     )
-    CRAG_AVAILABLE = True
-except ImportError:
-    CRAG_AVAILABLE = False
-    print("[INFO] CRAG機能は利用できません（enhanced_rag_searchモジュールが見つかりません）")
 
 
 def load_source_document(input_path: Optional[str] = None) -> str:
@@ -89,7 +84,7 @@ def generate_hearing_sheet(args, vector_store, embeddings, enable_crag=False):
     print("[INFO] ヒアリングシート生成モード")
 
     # CRAG機能の状態を表示
-    if CRAG_AVAILABLE and enable_crag:
+    if enable_crag:
         print("[INFO] CRAG機能: 有効")
     else:
         print("[INFO] CRAG機能: 無効")
@@ -135,7 +130,7 @@ def generate_proposal(args, vector_store, embeddings, enable_crag=False):
     print("[INFO] 提案書生成モード")
 
     # CRAG機能の状態を表示
-    if CRAG_AVAILABLE and enable_crag:
+    if enable_crag:
         print("[INFO] CRAG機能: 有効")
     else:
         print("[INFO] CRAG機能: 無効")

@@ -51,7 +51,7 @@ class DocumentClassifier:
             model=self.model_name,
             google_api_key=self.api_key,
             temperature=0.1,  # 分類タスクなので低温度で一貫性重視
-            max_output_tokens=100,  # カテゴリ名のみなので少なめ
+            max_output_tokens=512,  # カテゴリ名のみなので少なめ
         )
 
     def _build_classification_prompt(self, text_sample: str, file_name: str) -> str:
