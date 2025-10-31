@@ -1609,6 +1609,7 @@ def save_reflection_note(project_name: str, content: str, summaries_text: str = 
     model_short = model_name.replace('.', '-')
 
     note_file = output_path / f"{dt}_{model_short}_reflection_note.md"
+    note_file_latest = output_path / "reflection_note_latest.md"
 
     # '---' より前を削除し、'---' 自体も含めない
     marker = '---'
@@ -1618,17 +1619,32 @@ def save_reflection_note(project_name: str, content: str, summaries_text: str = 
             # '---' 自体を除外して残す
             content = content[idx + len(marker):].lstrip('\r\n')
 
+    # 日時付きファイルに保存
     with open(note_file, 'w', encoding='utf-8') as f:
         f.write(content)
-
     print(f"[INFO] 出力: {note_file}")
+
+    # _latest.mdファイルにも保存
+    with open(note_file_latest, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f"[INFO] 最新版: {note_file_latest}")
 
     # summaries_textも保存（提供されている場合）
     if summaries_text:
         summaries_file = output_path / f"{dt}_{model_short}_file_summaries.md"
+        summaries_file_latest = output_path / "summaries_latest.md"
+
+        summaries_content = f"# 個別ファイル分析結果\n\n{summaries_text}"
+
+        # 日時付きファイルに保存
         with open(summaries_file, 'w', encoding='utf-8') as f:
-            f.write(f"# 個別ファイル分析結果\n\n{summaries_text}")
+            f.write(summaries_content)
         print(f"[INFO] 分析結果詳細: {summaries_file}")
+
+        # _latest.mdファイルにも保存
+        with open(summaries_file_latest, 'w', encoding='utf-8') as f:
+            f.write(summaries_content)
+        print(f"[INFO] 分析結果最新版: {summaries_file_latest}")
 
 
 # ==================== タグ生成関連のヘルパー関数 ====================
@@ -1923,12 +1939,18 @@ def save_tags(project_name: str, tags_data: Dict):
         "summary": tags_data.get("summary", "")
     }
 
-    # 保存
+    # 日時付きファイルに保存
     tags_file = output_path / f"{dt}_{model_short}_tags.yaml"
     with open(tags_file, 'w', encoding='utf-8') as f:
         yaml.safe_dump(tags_output, f, allow_unicode=True, default_flow_style=False)
-
     print(f"[INFO] タグ保存: {tags_file}")
+
+    # _latest.yamlファイルにも保存
+    tags_file_latest = output_path / "tags_latest.yaml"
+    with open(tags_file_latest, 'w', encoding='utf-8') as f:
+        yaml.safe_dump(tags_output, f, allow_unicode=True, default_flow_style=False)
+    print(f"[INFO] タグ最新版: {tags_file_latest}")
+
     print(f"[INFO] 生成されたタグ ({len(tags_data.get('tags', []))}個): {', '.join(tags_data.get('tags', []))}")
 
 
