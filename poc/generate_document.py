@@ -5,27 +5,27 @@
 リフレクションノートまたはヒアリングシートから、
 各種ドキュメント（ヒアリングシート、提案書など）を自動生成します。
 
+出力ファイルは入力ファイルと同じディレクトリに以下の2つが作成されます：
+- タイムスタンプ付きファイル（例: 20251031_123456_hearing_sheet.md）
+- 最新版ファイル（例: hearing_sheet_latest.md）
+
 使用例:
-    # ヒアリングシート生成
+    # ヒアリングシート生成（入力ファイルと同じディレクトリに自動保存）
     python generate_document.py hearing-sheet \
-        --input reflection_note.md \
-        --output hearing_sheet.md
+        --input reflection_note.md
 
     # 提案書生成
     python generate_document.py proposal \
-        --input hearing_sheet.md \
-        --output proposal.md
+        --input hearing_sheet.md
 
-    # リフレクションノートから直接提案書生成
-    python generate_document.py proposal \
-        --input reflection_note.md \
-        --output proposal.md
+    # 標準入力から読み込み
+    python generate_document.py proposal --input -
 """
 import argparse
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 # 親ディレクトリをパスに追加
 sys.path.insert(0, str(Path(__file__).parent))
@@ -42,41 +42,70 @@ from rag.enhanced_rag_search import (
     )
 
 
-def load_source_document(input_path: Optional[str] = None) -> str:
+def load_source_document(input_path: str) -> str:
     """
     ソースドキュメントを読み込み
 
     Args:
-        input_path: ファイルパス（Noneの場合は標準入力から読み込み）
+        input_path: ファイルパス（"-"の場合は標準入力から読み込み）
 
     Returns:
         ソースドキュメントのテキスト
     """
-    if input_path:
-        with open(input_path, 'r', encoding='utf-8') as f:
-            return f.read()
-    else:
+    if input_path == "-":
         print("[INFO] 標準入力からソースドキュメントを読み込み中... (Ctrl+D で終了)")
         return sys.stdin.read()
+    else:
+        with open(input_path, 'r', encoding='utf-8') as f:
+            return f.read()
 
 
-def save_document(content: str, output_path: Optional[str] = None) -> None:
+def generate_output_path(input_path: str, document_type: str) -> tuple[Path, str]:
     """
-    ドキュメントを保存
+    入力ファイルパスからドキュメント種別に応じた出力パスを生成
+
+    Args:
+        input_path: 入力ファイルパス
+        document_type: 'hearing-sheet' または 'proposal'
+
+    Returns:
+        (タイムスタンプ付きファイルパス, _latestファイル名) のタプル
+    """
+    input_file = Path(input_path) if input_path != "-" else Path.cwd()
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    if document_type in ['hearing-sheet', 'hs']:
+        filename = f"{timestamp}_hearing_sheet.md"
+        latest_name = "hearing_sheet_latest.md"
+    elif document_type in ['proposal', 'prop']:
+        filename = f"{timestamp}_proposal.md"
+        latest_name = "proposal_latest.md"
+    else:
+        raise ValueError(f"Unknown document type: {document_type}")
+
+    return input_file.parent / filename, latest_name
+
+
+def save_document(content: str, output_path: str, latest_name: str) -> None:
+    """
+    ドキュメントを保存（日付付き + _latest の2つ）
 
     Args:
         content: ドキュメントの内容
-        output_path: 出力ファイルパス（Noneの場合は標準出力）
+        output_path: タイムスタンプ付き出力ファイルパス
+        latest_name: _latestファイルの名前（例: "hearing_sheet_latest.md"）
     """
-    if output_path:
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-        print(f"\n[SUCCESS] ドキュメントを保存しました: {output_path}")
-    else:
-        print("\n" + "=" * 60)
-        print("生成されたドキュメント")
-        print("=" * 60 + "\n")
-        print(content)
+    # 日付付きファイルに保存
+    output_file = Path(output_path)
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f"\n[SUCCESS] ドキュメントを保存しました: {output_path}")
+
+    # _latest.mdファイルも作成（種別ベースの固定名）
+    latest_file = output_file.parent / latest_name
+    with open(latest_file, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f"[SUCCESS] 最新版も保存しました: {latest_file}")
 
 
 def generate_hearing_sheet(args, vector_store, embeddings, enable_crag=False):
@@ -171,19 +200,24 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用例:
-  # ヒアリングシート生成
-  %(prog)s hearing-sheet --input reflection_note.md --output hearing_sheet.md
+  # ヒアリングシート生成（入力ファイルと同じディレクトリに自動保存）
+  %(prog)s hearing-sheet --input reflection_note.md
 
-  # 提案書生成（ヒアリングシートから）
-  %(prog)s proposal --input hearing_sheet.md --output proposal.md
+  # 提案書生成
+  %(prog)s proposal --input hearing_sheet.md
 
-  # 提案書生成（リフレクションノートから直接）
-  %(prog)s proposal --input reflection_note.md --output proposal.md
+  # 標準入力から読み込み
+  cat reflection_note.md | %(prog)s proposal --input -
 
   # プロジェクト情報を指定
   %(prog)s proposal --input reflection_note.md \\
       --project-name "ECサイトリニューアル" \\
       --customer-name "株式会社サンプル商事"
+
+出力ファイル:
+  入力ファイルと同じディレクトリに以下の2つが作成されます：
+  - タイムスタンプ付きファイル: {yyyymmdd_HHMMSS}_{type}.md
+  - 最新版ファイル: {type}_latest.md
         """
     )
 
@@ -214,12 +248,8 @@ def main():
         subparser.add_argument(
             '--input', '-i',
             type=str,
-            help='ソースドキュメントのファイルパス（省略時は標準入力）'
-        )
-        subparser.add_argument(
-            '--output', '-o',
-            type=str,
-            help='出力ファイルパス（省略時は標準出力）'
+            required=True,
+            help='ソースドキュメントのファイルパス（必須、"-"で標準入力）'
         )
 
         # プロジェクト情報オプション
@@ -348,13 +378,20 @@ def main():
             print(f"[ERROR] 未知のドキュメントタイプ: {args.document_type}", file=sys.stderr)
             sys.exit(1)
 
-        # 5. 結果を保存
-        save_document(document, args.output)
+        # 5. 出力パスを生成
+        output_path, latest_name = generate_output_path(args.input, args.document_type)
+
+        # 6. 結果を保存
+        save_document(document, str(output_path), latest_name)
 
         print("\n[SUCCESS] ドキュメント生成が完了しました！")
 
     except FileNotFoundError as e:
         print(f"[ERROR] ファイルが見つかりません: {e}", file=sys.stderr)
+        print(f"[INFO] カレントディレクトリ: {os.getcwd()}", file=sys.stderr)
+        sys.exit(1)
+    except PermissionError as e:
+        print(f"[ERROR] ファイルへのアクセス権限がありません: {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"[ERROR] エラーが発生しました: {e}", file=sys.stderr)

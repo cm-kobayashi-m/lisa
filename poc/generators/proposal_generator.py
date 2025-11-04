@@ -30,6 +30,75 @@ from rag.rag_fusion import rag_fusion_search, apply_hybrid_scoring
 from rag.enhanced_rag_search import create_enhanced_rag_search, EnhancedRAGConfig
 
 
+def _extract_content(response) -> str:
+    """
+    LLMレスポンスからコンテンツを抽出
+
+    Gemini 2.0などでcontentがリスト形式で返される場合に対応
+
+    Args:
+        response: LLMからのレスポンス
+
+    Returns:
+        抽出されたテキストコンテンツ
+    """
+    if response is None:
+        return ""
+
+    # 公式SDK系: response.text がある場合は最短経路
+    text = getattr(response, "text", None)
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+
+    # contentが無ければ response 自体を中身とみなす
+    content = getattr(response, "content", response)
+    if content is None:
+        return ""
+
+    # 文字列
+    if isinstance(content, str):
+        return content.strip()
+
+    # バイト列
+    if isinstance(content, (bytes, bytearray)):
+        try:
+            return content.decode("utf-8", errors="ignore").strip()
+        except Exception:
+            return ""
+
+    # dict（Gemini系: {'parts': [...]} / {'text': '...'} など）
+    if isinstance(content, dict):
+        if "text" in content and isinstance(content["text"], str):
+            return content["text"].strip()
+        parts = content.get("parts")
+        if isinstance(parts, list):
+            content = parts  # 下のlist処理へ
+        else:
+            return str(content).strip()
+
+    # list（LangChainのAIMessage.contentがリスト化されるケース等）
+    if isinstance(content, list):
+        texts = []
+        for part in content:
+            if part is None:
+                continue
+            if isinstance(part, str):
+                t = part
+            elif isinstance(part, dict):
+                t = part.get("text")
+            else:
+                t = getattr(part, "text", None)
+            if isinstance(t, str) and t:
+                texts.append(t)
+        return "".join(texts).strip()
+
+    # フォールバック
+    try:
+        return str(content).strip()
+    except Exception:
+        return ""
+
+
 class ProposalGenerator:
     """ヒアリングシート/リフレクションノート → 提案書生成"""
 
@@ -166,7 +235,7 @@ JSON形式のみを出力してください（説明や追加テキストは不�
         try:
             response = self.llm.invoke(extraction_prompt)
             import json
-            content = response.content.strip()
+            content = _extract_content(response)
             if content.startswith("```"):
                 lines = content.split("\n")
                 content = "\n".join(lines[1:-1])
@@ -409,7 +478,7 @@ JSON形式のみを出力してください。
         try:
             response = self.llm.invoke(solution_prompt)
             import json
-            content = response.content.strip()
+            content = _extract_content(response)
             if content.startswith("```"):
                 lines = content.split("\n")
                 content = "\n".join(lines[1:-1])
@@ -458,7 +527,7 @@ JSON形式のみを出力してください。
         try:
             response = self.llm.invoke(plan_prompt)
             import json
-            content = response.content.strip()
+            content = _extract_content(response)
             if content.startswith("```"):
                 lines = content.split("\n")
                 content = "\n".join(lines[1:-1])
@@ -500,7 +569,7 @@ JSON形式のみを出力してください。
         try:
             response = self.llm.invoke(cost_prompt)
             import json
-            content = response.content.strip()
+            content = _extract_content(response)
             if content.startswith("```"):
                 lines = content.split("\n")
                 content = "\n".join(lines[1:-1])
@@ -540,7 +609,7 @@ JSON形式のみを出力してください。
         try:
             response = self.llm.invoke(risk_prompt)
             import json
-            content = response.content.strip()
+            content = _extract_content(response)
             if content.startswith("```"):
                 lines = content.split("\n")
                 content = "\n".join(lines[1:-1])
@@ -725,7 +794,7 @@ Markdown形式で完全な提案書を生成してください。
 
         try:
             response = self.llm.invoke(generation_prompt)
-            proposal = response.content.strip()
+            proposal = _extract_content(response)
 
             # メタデータを追加
             current_date = datetime.now().strftime("%Y年%m月%d日")
