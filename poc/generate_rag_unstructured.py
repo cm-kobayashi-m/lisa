@@ -202,16 +202,16 @@ class FileCache:
         """キャッシュファイルを読み込み"""
         if self.cache_file.exists():
             try:
-                with open(self.cache_file, 'r') as f:
+                with open(self.cache_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except:
                 return {}
         return {}
 
     def _save_cache(self):
-        """キャッシュファイルを保存"""
-        with open(self.cache_file, 'w') as f:
-            json.dump(self.cache, f, indent=2)
+        """キャッシュファイルを保存（日本語を正しく表示）"""
+        with open(self.cache_file, 'w', encoding='utf-8') as f:
+            json.dump(self.cache, f, indent=2, ensure_ascii=False)
 
     def get_file_hash(self, file_id: str, modified_time: str) -> str:
         """ファイルのハッシュ値を生成"""
@@ -223,14 +223,19 @@ class FileCache:
         file_hash = self.get_file_hash(file_id, modified_time)
         return file_hash in self.cache
 
-    def mark_processed(self, file_id: str, modified_time: str, chunk_count: int):
-        """ファイルを処理済みとしてマーク"""
+    def mark_processed(self, file_id: str, modified_time: str, chunk_count: int,
+                      project_name: str = None, file_name: str = None,
+                      document_type: str = None):
+        """ファイルを処理済みとしてマーク（詳細メタデータ付き）"""
         file_hash = self.get_file_hash(file_id, modified_time)
         self.cache[file_hash] = {
             "file_id": file_id,
+            "file_name": file_name,
+            "project_name": project_name,
             "modified_time": modified_time,
             "processed_at": datetime.now().isoformat(),
             "chunk_count": chunk_count,
+            "document_type": document_type,
             "cache_version": CACHE_VERSION
         }
         self._save_cache()
@@ -483,7 +488,7 @@ class OptimizedChunker:
 
             # 構造的なチャンク化
             chunks = self._elements_to_chunks(elements, project_name, file_name)
-
+            print(chunks)
             # ファイルのメタデータを追加
             for chunk in chunks:
                 if "modifiedTime" in file_info:
@@ -498,8 +503,7 @@ class OptimizedChunker:
 
             print(f"    {log_prefix} {len(chunks)}個のチャンクを生成")
 
-            # キャッシュに記録
-            self.file_cache.mark_processed(file_id, modified_time, len(chunks))
+            # 注: mark_processedはS3保存後にprocess_batchで呼び出される
 
             return chunks
 
@@ -1313,7 +1317,7 @@ class OptimizedChunker:
 class OptimizedVectorDBBuilder:
     """最適化されたベクトルDB構築処理（Phase 1改善）"""
 
-    def __init__(self):
+    def __init__(self, file_cache: FileCache = None):
         # Embeddings初期化
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
@@ -1339,28 +1343,62 @@ class OptimizedVectorDBBuilder:
         self.chunk_buffer = []
         self.document_buffer = []
 
+        # FileCacheへの参照を保持
+        self.file_cache = file_cache
+
         # 進捗管理用カウンタ
         self.total_chunks = 0  # 全体のチャンク数
         self.processed_chunks = 0  # 処理済みチャンク数
         self.saved_chunks = 0  # S3に保存済みチャンク数
 
-    def save_chunks_batch(self, chunks: List[Dict], file_name: str) -> int:
+        # ファイル処理情報の管理
+        self.file_processing_info = {}  # file_id -> {file_info, chunks_info}
+
+    def save_chunks_batch(self, chunks: List[Dict], file_info: Dict, project_name: str = None) -> int:
         """チャンクをバッファに追加（Phase 1: バッチ処理）"""
 
         if not chunks:
             return 0
 
+        file_id = file_info.get("id", "unknown")
+        file_name = file_info.get("name", "unknown")
         log_prefix = f"[{file_name}]"
+
+        # ファイル処理情報を記録
+        if file_id not in self.file_processing_info:
+            # ドキュメントタイプを判定
+            document_type = "unknown"
+            element_types = set()
+            if chunks and len(chunks) > 0:
+                for chunk in chunks:
+                    if "elements" in chunk:
+                        for elem in chunk.get("elements", []):
+                            element_types.add(elem.get("type", "unknown"))
+                if element_types:
+                    document_type = ",".join(sorted(element_types))
+
+            self.file_processing_info[file_id] = {
+                "file_info": file_info,
+                "project_name": project_name,
+                "document_type": document_type,
+                "chunk_count": 0,
+                "saved": False
+            }
 
         # 全体のチャンク数を更新
         new_chunks_count = len(chunks)
         self.total_chunks += new_chunks_count
+        self.file_processing_info[file_id]["chunk_count"] += new_chunks_count
         print(f"    {log_prefix} [処理] {new_chunks_count}個のチャンクをバッファに追加... (全体進捗: {self.total_chunks}個)")
 
-        for chunk_info in chunks:
+        for i, chunk_info in enumerate(chunks):
             self.chunk_buffer.append({
                 "chunk": chunk_info,
-                "file_name": file_name
+                "file_name": file_name,
+                "file_info": file_info,
+                "file_id": file_id,
+                "project_name": project_name,
+                "chunk_index": i
             })
 
         # バッファが一定サイズに達したらバッチ処理
@@ -1424,6 +1462,9 @@ class OptimizedVectorDBBuilder:
                 )
                 doc_key = f"doc_{hashlib.md5(key_string.encode()).hexdigest()[:16]}_{metadata['chunk_index']}"
 
+                # metadataにfile_idを追加
+                metadata["file_id"] = item.get("file_id", "unknown")
+
                 # Document作成
                 doc = Document(
                     key=doc_key,
@@ -1443,6 +1484,47 @@ class OptimizedVectorDBBuilder:
             # TODO: batch_add_documentsメソッドが実装されていない場合
             # 現状は既存のadd_documentsメソッドを使用（内部でバッチ処理）
             added = self.vector_store.add_documents(documents, batch_size=S3_BATCH_SIZE)
+
+            # S3保存成功後、ファイルごとにキャッシュに記録
+            if self.file_cache and documents:
+                # documentsから処理済みファイルIDを収集（実際に保存されたもののみ）
+                processed_file_ids = set()
+                for doc in documents:
+                    # documentsのメタデータからfile_idを取得
+                    if doc.metadata and "file_id" in doc.metadata:
+                        processed_file_ids.add(doc.metadata["file_id"])
+
+                # file_idが取得できない場合はbatchから取得を試みる
+                if not processed_file_ids:
+                    for item in batch:
+                        if "file_id" in item:
+                            processed_file_ids.add(item["file_id"])
+
+                # 各ファイルについてmark_processedを呼び出し
+                for file_id in processed_file_ids:
+                    if file_id in self.file_processing_info:
+                        file_data = self.file_processing_info[file_id]
+                        if not file_data.get("saved", False):
+                            # documentsからこのfile_idのdocument_typeを収集
+                            document_type = 'unknown'
+                            for doc in documents:
+                                if doc.metadata and doc.metadata.get("file_id") == file_id:
+                                    # document_typeから取得
+                                    if "document_type" in doc.metadata:
+                                        document_type = doc.metadata["document_type"]
+
+                            # まだマークされていないファイルを処理済みとしてマーク
+                            file_info = file_data["file_info"]
+                            self.file_cache.mark_processed(
+                                file_id=file_id,
+                                modified_time=file_info.get("modifiedTime", ""),
+                                chunk_count=file_data["chunk_count"],
+                                project_name=file_data["project_name"],
+                                file_name=file_info.get("name", ""),
+                                document_type=document_type
+                            )
+                            file_data["saved"] = True
+                            print(f"    [キャッシュ] ファイル {file_info.get('name', 'unknown')} を処理済みとして記録 (タイプ: {document_type})")
 
             # 完了率を表示
             if self.total_chunks > 0:
@@ -1516,7 +1598,7 @@ def _process_single_file_optimized(
 
         if chunks:
             # バッファに追加（バッチ処理）
-            added = vector_db.save_chunks_batch(chunks, file_info["name"])
+            added = vector_db.save_chunks_batch(chunks, file_info, project_name)
             print(f"    {log_prefix} ✓ チャンクをバッファに追加")
             print(f"  {log_prefix} ======================================== \n")
             return len(chunks)  # チャンク数を返す
@@ -1578,7 +1660,7 @@ def main():
 
     # 処理コンポーネント初期化
     print("[INFO] 処理コンポーネント初期化中...")
-    vector_db = OptimizedVectorDBBuilder()
+    vector_db = OptimizedVectorDBBuilder(file_cache=file_cache)
 
     # ドキュメント分類器初期化
     print("[INFO] ドキュメント分類器を初期化中...")
