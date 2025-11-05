@@ -120,7 +120,7 @@ class DocumentClassifier:
             model=self.model_name,
             google_api_key=self.api_key,
             temperature=0.1,  # 分類タスクなので低温度で一貫性重視
-            max_output_tokens=512,  # カテゴリ名のみなので少なめ
+            max_output_tokens=8192,  # カテゴリ名のみなので少なめ
         )
 
     def _build_classification_prompt(self, text_sample: str, file_name: str) -> str:
@@ -208,7 +208,7 @@ class DocumentClassifier:
                     print(f"    [WARN] 無効なカテゴリ '{category}' が返されました。'その他'に分類します。")
                     category = "その他"
 
-            # 信頼度は現在1.0固定（将来的に改善可能）
+            # ToDo: 信頼度は現在1.0固定（将来的に改善可能）
             confidence = 1.0
 
             return category, confidence

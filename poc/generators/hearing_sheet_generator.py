@@ -151,7 +151,7 @@ class HearingSheetGenerator:
                 model=model_name,
                 google_api_key=api_key,
                 temperature=0.3,  # 適度な創造性
-                max_output_tokens=8192
+                max_output_tokens=32768
             )
 
         # Gemini APIクライアント初期化（RAG-Fusion用）
@@ -628,6 +628,7 @@ JSON形式のみを出力してください（説明や追加テキストは不�
 
 ## 4. 類似案件からの参考情報
 - 過去の類似案件での知見
+    - 類似案件での事例には会社名を出さないようにして代わりに業界名・会社規模などに置き換える
 - 注意すべきポイント
 
 ## 5. 追加確認事項(ヒアリング事項)

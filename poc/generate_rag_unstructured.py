@@ -656,7 +656,7 @@ class OptimizedChunker:
                 model=model_name,
                 google_api_key=api_key,
                 temperature=0.1,  # 低めの温度で正確性重視
-                max_output_tokens=8192,
+                max_output_tokens=32768,
             )
 
             # OCRプロンプト
@@ -728,7 +728,7 @@ class OptimizedChunker:
             document_type, confidence = self.classifier.classify_from_elements(
                 elements=elements,
                 file_name=file_name,
-                max_elements=10  # 先頭10要素から判定
+                max_elements=30  # 先頭30要素から判定
             )
             print(f"    {log_prefix} [分類] 判定結果: {document_type} (信頼度: {confidence:.2f})")
 

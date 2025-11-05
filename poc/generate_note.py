@@ -109,7 +109,8 @@ def generate_project_keywords(client: genai.Client, project_name: str) -> str:
     try:
         response = client.models.generate_content(
             model=model_name,
-            contents=prompt
+            contents=prompt,
+            config=genai.types.GenerateContentConfig(max_output_tokens=8192,temperature=0.3)
         )
         keywords = response.text.strip()
         # 改行やタブをスペースに変換
@@ -167,7 +168,7 @@ def generate_multiple_queries(
   2. 技術スタック vs ビジネス価値
   3. 課題領域 vs 解決手段
   4. プロジェクト規模 vs 実装詳細
-- 各クエリは50文字以内
+- 各クエリは200文字以内
 - 検索に適した具体的なキーワードを含める
 
 【出力形式】
@@ -182,7 +183,8 @@ def generate_multiple_queries(
     try:
         response = client.models.generate_content(
             model=model_name,
-            contents=prompt
+            contents=prompt,
+            config=genai.types.GenerateContentConfig(max_output_tokens=8192,temperature=0.3)
         )
 
         # クエリを抽出
@@ -268,7 +270,8 @@ def generate_project_summary(client: genai.Client, project_name: str, current_re
     try:
         response = client.models.generate_content(
             model=model_name,
-            contents=prompt
+            contents=prompt,
+            config=genai.types.GenerateContentConfig(max_output_tokens=8192,temperature=0.3)
         )
         summary = response.text.strip()
         print(f"[INFO] 生成されたプロジェクト概要: {summary[:100]}...")
@@ -317,7 +320,8 @@ def generate_similar_project_query(client: genai.Client, project_summary: str, p
     try:
         response = client.models.generate_content(
             model=model_name,
-            contents=prompt
+            contents=prompt,
+            config=genai.types.GenerateContentConfig(max_output_tokens=8192,temperature=0.3)
         )
         query = response.text.strip()
         # 改行やタブをスペースに変換
@@ -849,7 +853,8 @@ def analyze_reflection_note(
     try:
         response = client.models.generate_content(
             model=model_name,
-            contents=prompt
+            contents=prompt,
+            config=genai.types.GenerateContentConfig(max_output_tokens=8192,temperature=0.3)
         )
 
         # レスポンステキストを取得
@@ -946,7 +951,7 @@ def generate_refined_search_queries(
 【要件】
 - 現在のプロジェクト名「{project_name}」は除外してください
 - 同じ業界・技術・課題を持つプロジェクトを見つけるためのクエリを生成
-- 具体的で検索に適したキーワードフレーズ（50文字以内）
+- 具体的で検索に適したキーワードフレーズ（200文字以内）
 
 【出力形式】
 検索クエリのみを出力（説明不要）"""
@@ -956,7 +961,8 @@ def generate_refined_search_queries(
     try:
         response = client.models.generate_content(
             model=model_name,
-            contents=prompt
+            contents=prompt,
+            config=genai.types.GenerateContentConfig(max_output_tokens=8192,temperature=0.3)
         )
         refined_similar_query = response.text.strip()
         # 改行やタブをスペースに変換
@@ -1123,7 +1129,7 @@ def regenerate_reflection_note(
 以下は初回生成されたリフレクションノートです。
 この内容も参考にしながら、より精度の高いノートを生成してください。
 
-{initial_note[:3000]}
+{initial_note}
 """
 
     # 分析結果を追加
@@ -1158,7 +1164,8 @@ def regenerate_reflection_note(
     try:
         response = client.models.generate_content(
             model=model_name,
-            contents=enhanced_prompt
+            contents=enhanced_prompt,
+            config=genai.types.GenerateContentConfig(max_output_tokens=32768,temperature=0.6)
         )
         print(f"[INFO] リフレクションノート再生成完了")
         return response.text
@@ -1585,7 +1592,8 @@ def generate_final_reflection_note(client: genai.Client, project_name: str, enab
     try:
         response = client.models.generate_content(
             model=model_name,
-            contents=prompt
+            contents=prompt,
+            config=genai.types.GenerateContentConfig(max_output_tokens=32768,temperature=0.5)
         )
         return response.text, summaries_text
     except Exception as e:
@@ -1854,7 +1862,8 @@ summary: タグ選定の理由（簡潔に）
     try:
         response = client.models.generate_content(
             model=model_name,
-            contents=prompt
+            contents=prompt,
+            config=genai.types.GenerateContentConfig(max_output_tokens=8192,temperature=0.1)
         )
 
         # レスポンステキストを取得
