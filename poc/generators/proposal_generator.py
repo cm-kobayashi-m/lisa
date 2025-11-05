@@ -151,7 +151,7 @@ class ProposalGenerator:
                 model=model_name,
                 google_api_key=api_key,
                 temperature=0.5,  # 提案書は創造性が必要
-                max_output_tokens=8192
+                max_output_tokens=32768
             )
 
         # Gemini APIクライアント初期化（RAG-Fusion用）
