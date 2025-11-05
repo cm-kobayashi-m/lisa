@@ -255,7 +255,7 @@ JSON形式のみを出力してください（説明や追加テキストは不�
 
     def _search_similar_proposals(
         self,
-        source_document: str,
+        reflection_note: str,
         project_name: str = "",
         k: int = 5,
         additional_prompt: Optional[str] = None  # Query Translation用
@@ -272,32 +272,86 @@ JSON形式のみを出力してください（説明や追加テキストは不�
         Returns:
             検索結果のリスト
         """
-        # Query Translation実行
-        if additional_prompt:
-            from generators.query_translator import translate_query_with_context
+        # specialist_persona_prompt_latest.mdのパス
+        persona_file = Path(__file__).parent / "../outputs" / "work_flow.md"
+        # ファイル読み込み
+        with open(persona_file, "r", encoding="utf-8") as f:
+            your_system_prompt = f.read()
 
-            print(f"    [Query Translation] 追加コンテキストを考慮したクエリ生成中...")
-            translated = translate_query_with_context(
-                client=self.gemini_client,
-                source_document=source_document,
-                additional_prompt=additional_prompt,
-                num_queries=3
-            )
+        # ToDo: ベースプロンプト（ユーザー or 組織ごとに異なるようになる）
+        base_prompt = f"""
+        ## 役割
+        あなたはSIerのデータ事業本部のメンバーです。
+        データ事業本部では「データ分析」の環境構築支援を提供している事業部です。
+        データの集約から加工、可視化、分析等、ビッグデータを扱う環境構築を支援しています。「データ活用で企業のビジネスを促進すること」 がわたしたちのミッションとなります。
+        DX(デジタルトランスフォーメーション)というワードを聞く機会も増えた現在、データ分析はとても大切な領域となっています。一方で、
 
-            # 翻訳されたクエリとフィルタを使用
-            base_query = translated["primary_query"]
+        - データ分析/機械学習分析をしたいけれど、どこから始めれば良いのかわからない
+        - データ分析環境を構築したいけれど、ノウハウがない
+        - データを収集するためのツールを探している
+        - データ分析基盤を構築したのだけれど、運用が難しい
 
-            # 参考プロジェクトがある場合は優先的に検索
-            if translated.get("reference_projects"):
-                print(f"    [Query Translation] 参考プロジェクト: {', '.join(translated['reference_projects'])}")
-                if translated["reference_projects"]:
-                    # 最初の参考プロジェクトを優先
-                    project_name = translated["reference_projects"][0] or project_name
+        など、お客様の抱える課題は様々です。そんなお客様の抱える課題、お悩みを解決するため様々な観点から支援をするのがデータ事業本部のお仕事です。
 
-            print(f"    [Query Translation] 検索クエリ: {base_query[:50]}...")
-        else:
-            # 従来通りの処理
-            base_query = f"提案書を作成します。案件情報は次の通り。 {source_document[:300]}"
+        ## ペルソナ
+        あなたは、特に**技術的な実現可能性の評価と工数見積もりを担当する、経験豊富なソリューションアーキテクト(SA)またはプロジェクトマネージャー(PM)**です。
+
+        ## 目的
+        このヒアリングシートは、**初回ヒアリングでプロジェクトの目的や大枠のスコープについて合意が取れた後**に、**精度の高い工数見積もりと技術提案を行うこと**を目的とした「**技術詳細ヒアリングシート**」です。
+
+        このヒアリングは、主に開発担当者（PM/SA）が顧客の技術担当者や情報システム部門と行うことを想定しています。単に質問を羅列するのではなく、**「なぜその質問が必要なのか（確認の意図）」**も明確にしてください。
+
+        ## 指示
+        1.  後続のリフレクションノートを最優先のインプットとして、**この特定の案件に最適化された**ヒアリングシートを作成してください。
+        2.  ヒアリング項目には、【案件コンテキスト】で与えられた具体的な製品名（例：xxxx）を積極的に使用し、「我々はこの案件を深く理解している」という姿勢を顧客に示してください。
+        3.  もしコンテキスト情報が不足している場合（例：yyyyが「不明」の場合）は、そのカテゴリについて一般的な用語（例：「現在、データの加工・変換はどのようなツールやスクリプトで行っていますか？」）で質問を補完してください。
+        4.  各質問には、顧客が回答をイメージしやすくなるよう、括弧書きで複数の選択肢や例（例：...）を補足してください。
+        5.  各質問カテゴリの冒頭には、**「（この質問の意図：...）」**という形式で、なぜその情報を知る必要があるのかを簡潔に記述してください。
+
+        ## 出力フォーマット（このフォーマットを厳守すること）
+
+        | カテゴリ | 確認項目 | 質問・確認方法 | （顧客からの回答記入欄） |
+        | :--- | :--- | :--- | :--- |
+        | (カテゴリ名) | (確認する具体的な項目) | (顧客に提示する具体的な質問や依頼) | (空欄) |
+
+        ---
+
+        ## 出力フォーマットの具体例（この例を完全に模倣すること）
+
+        | カテゴリ | 確認項目 | 質問・確認方法 | （顧客からの回答記入欄） |
+        | :--- | :--- | :--- | :--- |
+        | **データソース** | 接続対象システム一覧 | 現在、分析基盤に接続しているすべてのデータソース（システム、サービス、DB名など）をリストアップしてください。 | |
+        | | データ種類 | 各データソースから取得しているデータの概要を教えてください。（例：出退勤ログ、ストレスチェック結果、販売実績データなど） | |
+        | | 接続方式 | 各データソースへの接続方式を教えてください。（例：API、DB接続(ODBC/JDBC)、SFTPファイル転送、手動アップロードなど） | |
+        | | データ形式 | 連携されるファイルの形式は何ですか？（例：CSV, JSON, Parquet, Excelなど） | |
+        | | ファイル構成・サイズ | ファイル連携の場合、その構成と平均的なサイズを教えてください。（例：「数KBのファイルが毎時100個」「1GBのファイルが日次で1個」など） | |
+        | | 更新頻度 | 各データソースのデータ更新頻度を教えてください。（例：リアルタイム、15分ごと、日次、月次など） | |
+
+        ---
+
+        ## チェックリスト生成の対象カテゴリ
+        上記の具体例を参考に、以下のすべてのカテゴリについて、表形式でチェックリストを生成してください。
+
+        1.  **データソース**
+        2.  **データ連携・収集 (Ingestion)**
+        3.  **データ加工・変換 (Transformation)**
+        4.  **データ蓄積・保管 (Storage)**
+        5.  **データ活用・可視化 (BIツール)**
+        6.  **データ活用・可視化 (カスタムアプリケーション)**
+        7.  **非機能要件（性能・セキュリティ・運用）**
+
+        ## 追加指示
+        {additional_prompt}
+
+        ## 本ドキュメントを作成するフェーズ
+        以下の添付の業務フローの中のヒアリングシートになります。
+
+        # 業務フロー
+        {your_system_prompt}
+        
+        """
+
+        base_query = f"これから提案書を作成します。{base_prompt} 案件情報は次の通り。 {reflection_note}"
 
         # CRAGが有効な場合はCRAGを使用
         if self.enable_crag and self.enhanced_search:
@@ -376,11 +430,8 @@ JSON形式のみを出力してください（説明や追加テキストは不�
         else:
             print(f"    [従来検索] 提案書検索中（k={k}）...")
 
-            # 従来の検索（Query Translationの結果を使用）
-            query = base_query if additional_prompt else source_document[:500]
-
             results = self.retriever.search_by_category(
-                query=query,
+                query=base_query,
                 category="提案書",
                 k=k
             )

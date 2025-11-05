@@ -268,7 +268,7 @@ def main():
         subparser.add_argument(
             '--search-k',
             type=int,
-            default=5,
+            default=60,
             help='類似案件の検索件数（デフォルト: 5）'
         )
 
