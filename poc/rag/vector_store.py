@@ -131,11 +131,36 @@ class S3VectorStore:
             )
         except ClientError as e:
             error_code = e.response.get('Error', {}).get('Code', '')
+            error_message = e.response.get('Error', {}).get('Message', '')
+
+            # ValidationExceptionの詳細ログ
+            if error_code == 'ValidationException':
+                logger.error(f"ValidationException詳細: {error_message}")
+                logger.error(f"エラー全体: {e.response}")
+                # ベクトルデータの一部をログ出力（デバッグ用）
+                if vectors:
+                    # すべてのキーをチェックして重複を検出
+                    all_keys = [v.get('key', 'なし') for v in vectors]
+                    unique_keys = set(all_keys)
+                    if len(all_keys) != len(unique_keys):
+                        logger.error(f"[重要] バッチ内にキーの重複があります！")
+                        logger.error(f"全キー数: {len(all_keys)}, ユニークキー数: {len(unique_keys)}")
+                        # 重複キーを特定
+                        from collections import Counter
+                        key_counts = Counter(all_keys)
+                        duplicates = [k for k, c in key_counts.items() if c > 1]
+                        logger.error(f"重複キー: {duplicates[:5]}")  # 最初の5つまで表示
+
+                    first_vector = vectors[0]
+                    logger.error(f"最初のベクトルのキー: {first_vector.get('key', 'なし')}")
+                    logger.error(f"ベクトルの次元数: {len(first_vector.get('data', {}).get('float32', []))}")
+                    logger.error(f"メタデータのキー: {list(first_vector.get('metadata', {}).keys())}")
+
             if self._is_throttling_error(e):
                 logger.warning(f"S3 Vectors APIレート制限: {error_code}")
                 raise  # リトライ
             else:
-                logger.error(f"ベクトルの追加に失敗（リトライ不可）: {error_code}")
+                logger.error(f"ベクトルの追加に失敗（リトライ不可）: {error_code} - {error_message}")
                 raise
 
     def _initialize_storage(self):
@@ -227,6 +252,26 @@ class S3VectorStore:
 
             # S3 Vectors形式に変換
             vectors = []
+            seen_keys = set()  # 重複キーチェック用
+
+            # メタデータサイズ制限ヘルパー関数
+            def truncate_str(s, max_bytes=4000):
+                """文字列を指定バイト数以下に切り詰める"""
+                if not s:
+                    return ""
+                s_str = str(s)  # 確実に文字列に変換
+                encoded = s_str.encode('utf-8')
+                if len(encoded) <= max_bytes:
+                    return s_str
+                # バイト数を超える場合は切り詰め
+                truncated = encoded[:max_bytes-100].decode('utf-8', 'ignore')
+                return truncated + '...'
+
+            def create_json_field(data, max_bytes=4000):
+                """JSONフィールドを作成し、サイズ制限を適用"""
+                json_str = json.dumps(data, ensure_ascii=False)
+                return truncate_str(json_str, max_bytes)
+
             for doc in batch:
                 if not doc.vector:
                     logger.warning(f"ドキュメント '{doc.key}' にベクトルがありません")
@@ -235,63 +280,72 @@ class S3VectorStore:
                 # メタデータの準備（S3 Vectorsの10キー制限に対応）
                 import json
 
-                # フィルタ用の独立フィールド（3個）
+                # フィルタ用の独立フィールド（3個）- サイズ制限を適用
                 metadata = {
-                    "project_name": doc.metadata.get("project_name", ""),
-                    "file_name": doc.metadata.get("file_name", ""),
-                    "document_type": doc.metadata.get("document_type", ""),
+                    "project_name": truncate_str(doc.metadata.get("project_name", ""), 500),
+                    "file_name": truncate_str(doc.metadata.get("file_name", ""), 500),
+                    "document_type": truncate_str(doc.metadata.get("document_type", ""), 200),
 
                     # 基本情報をJSON化（4個目）
-                    "basic_info": json.dumps({
+                    "basic_info": create_json_field({
                         "title": doc.metadata.get("title", ""),
                         "chunk_index": doc.metadata.get("chunk_index", 0),
-                        "created_at": doc.metadata.get("created_at", ""),
-                        "modified_at": doc.metadata.get("modified_at", ""),
+                        "created_at": str(doc.metadata.get("created_at", "")),
+                        "modified_at": str(doc.metadata.get("modified_at", "")),
                         "doc_type": doc.metadata.get("doc_type", "document"),
                         "data_source": doc.metadata.get("data_source", ""),
                         "source_id": doc.metadata.get("source_id", "")
-                    }, ensure_ascii=False),
+                    }, 3900),
 
                     # 階層情報をJSON化（5個目）
-                    "hierarchy_info": json.dumps({
+                    "hierarchy_info": create_json_field({
                         "heading_level": doc.metadata.get("heading_level", 0),
                         "section_path": doc.metadata.get("section_path", "")
-                    }, ensure_ascii=False),
+                    }, 3900),
 
                     # 構造情報をJSON化（6個目）
-                    "structure_info": json.dumps({
+                    "structure_info": create_json_field({
                         "has_table": doc.metadata.get("has_table", False),
                         "has_list": doc.metadata.get("has_list", False),
                         "has_code": doc.metadata.get("has_code", False),
                         "has_numbers": doc.metadata.get("has_numbers", False)
-                    }, ensure_ascii=False),
+                    }, 3900),
 
                     # 位置情報をJSON化（7個目）
-                    "position_info": json.dumps({
+                    "position_info": create_json_field({
                         "chunk_position": doc.metadata.get("chunk_position", ""),
                         "relative_position": doc.metadata.get("relative_position", 0.0),
-                        "prev_section": doc.metadata.get("prev_section", ""),
-                        "next_section": doc.metadata.get("next_section", "")
-                    }, ensure_ascii=False),
+                        "prev_section": truncate_str(doc.metadata.get("prev_section", ""), 1000),
+                        "next_section": truncate_str(doc.metadata.get("next_section", ""), 1000)
+                    }, 3900),
 
                     # 分析情報をJSON化（8個目）
-                    "analysis_info": json.dumps({
+                    "analysis_info": create_json_field({
                         "information_density": doc.metadata.get("information_density", 0.0),
                         "importance": doc.metadata.get("importance", "medium"),
                         "document_type_confidence": doc.metadata.get("document_type_confidence", 0.0)
-                    }, ensure_ascii=False),
+                    }, 3900),
 
-                    # リスト型データをJSON化（9個目）
-                    "list_data": json.dumps({
-                        "speakers": doc.metadata.get("speakers", []),
-                        "pages": doc.metadata.get("pages", []),
-                        "element_types": doc.metadata.get("element_types", []),
+                    # リスト型データをJSON化（9個目）- リストサイズも制限
+                    "list_data": create_json_field({
+                        "speakers": doc.metadata.get("speakers", [])[:10],  # 最大10人まで
+                        "pages": doc.metadata.get("pages", [])[:20],  # 最大20ページまで
+                        "element_types": doc.metadata.get("element_types", [])[:10],  # 最大10種類まで
                         "temporal_index": doc.metadata.get("temporal_index", 0)
-                    }, ensure_ascii=False),
+                    }, 3900),
 
-                    # テキスト内容（10個目、40KB制限内）
-                    "source_text": doc.text[:40000]
+                    # テキスト内容（10個目、4KB制限）
+                    "source_text": truncate_str(doc.text, 3900)
                 }
+
+                # 重複キーチェック
+                if doc.key in seen_keys:
+                    print(f"    [ERROR] 重複キー検出: {doc.key}")
+                    logger.error(f"重複キー検出: {doc.key}")
+                    # スキップして次のドキュメントへ
+                    continue
+
+                seen_keys.add(doc.key)
 
                 vectors.append({
                     "key": doc.key,

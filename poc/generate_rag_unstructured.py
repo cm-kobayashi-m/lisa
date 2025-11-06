@@ -1449,20 +1449,36 @@ class OptimizedVectorDBBuilder:
 
         # Document作成
         documents = []
-        for item, vector in zip(batch, vectors):
+        seen_keys = set()  # 重複キーチェック用
+
+        for idx, (item, vector) in enumerate(zip(batch, vectors)):
             if vector and len(vector) == self.embeddings.dimension:
                 chunk_info = item["chunk"]
                 file_name = item["file_name"]
                 metadata = chunk_info["metadata"]
+                file_id = item.get("file_id", "unknown")
+                project_name = item.get("project_name", "unknown")
 
-                # ドキュメントキー生成
+                # より一意性の高いキー生成（ファイルIDと実際のインデックスを使用）
+                # バッチ内でのインデックスも含めて一意性を保証
+                batch_idx = self.processed_chunks + idx
                 key_string = (
-                    f"{metadata['project_name']}/{file_name}/{metadata['chunk_index']}"
+                    f"{project_name}/{file_id}/{file_name}/{metadata['chunk_index']}/{batch_idx}"
                 )
-                doc_key = f"doc_{hashlib.md5(key_string.encode()).hexdigest()[:16]}_{metadata['chunk_index']}"
+                doc_key = f"doc_{hashlib.md5(key_string.encode()).hexdigest()[:16]}_{batch_idx}"
+
+                # 重複チェック
+                if doc_key in seen_keys:
+                    # 重複の場合は追加のハッシュを付けて一意にする
+                    import time
+                    unique_suffix = f"_{int(time.time() * 1000) % 10000}_{idx}"
+                    doc_key = f"{doc_key}{unique_suffix}"
+                    print(f"    [WARN] キー重複検出、修正: {doc_key}")
+
+                seen_keys.add(doc_key)
 
                 # metadataにfile_idを追加
-                metadata["file_id"] = item.get("file_id", "unknown")
+                metadata["file_id"] = file_id
 
                 # Document作成
                 doc = Document(
