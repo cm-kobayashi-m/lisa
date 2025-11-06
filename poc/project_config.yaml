@@ -7,147 +7,664 @@
 # 3. 不要なデータソースは削除可能
 
 projects:
-#  # プロジェクト名（任意の名前を設定）
-#  H2Oリテイリング:
-#    google_drive:
-#      - "12gYwdVKAko9gD_4wbpw6wlanj4vAE71N"
-#    slack:
-#    backlog:
-#
-#  デロイトトーマツ:
-#    google_drive:
-#      - "15oIZ57lYqfCd8KSZGGpom6c0AshOlwGq"
-#
-#  ヤーマン:
-#    google_drive:
-#      - "1WM6V92h18J7ZyOcxFLx5nLLi3vGYxU3v"
-#
-#  ダイコク電機:
-#    google_drive:
-#      - "1HtV2NWaoz4HlZVVCrypFqYrHWN1D880u"
-#
-#  MUJI-良品計画:
-#    google_drive:
-#      - "1GwPYXUjLZwzvB4T2mhvpFOOHWQqhzGGY"
-#
-#  TOYOTA-自動車:
-#    google_drive:
-#      - "1ogQMydpvRl38-WOTcpg3RbwgT0fCH8-f"
-#
-#  日本酒類:
-#    google_drive:
-#      - "1MpMfW_5mEHJkPjtlTgyglb5EYFEih2Uc"
+  # プロジェクト名（任意の名前を設定）
+  H2Oリテイリング:
+    google_drive:
+      - "12gYwdVKAko9gD_4wbpw6wlanj4vAE71N"
+    slack:
+    backlog:
 
-#  SUBARU:
-#    google_drive:
-#      - "1IRYqUf-wpMKp450QG8-UjT7ez4miDcES"
-#
-#  JEDI2G:
-#    google_drive:
-#      - "1h8GVoMQdxPd-hhRMsyv6ayGKsNA-etpo"
-#
+  デロイトトーマツ:
+    google_drive:
+      - "15oIZ57lYqfCd8KSZGGpom6c0AshOlwGq"
 
-#  コクヨ:
-#    google_drive:
-#      - "1Dg7Ra5osBM5gvaCvKUudaXf4uiZUVQug"
-#      - "1kL3FqFUvJbldTCkHmv9PkQFfQ7eZ0bNU"
+  ヤーマン:
+    google_drive:
+      - "1WM6V92h18J7ZyOcxFLx5nLLi3vGYxU3v"
+
+  ダイコク電機:
+    google_drive:
+      - "1HtV2NWaoz4HlZVVCrypFqYrHWN1D880u"
+
+  MUJI-良品計画:
+    google_drive:
+      - "1GwPYXUjLZwzvB4T2mhvpFOOHWQqhzGGY"
+
+  TOYOTA-自動車:
+    google_drive:
+      - "1ogQMydpvRl38-WOTcpg3RbwgT0fCH8-f"
+
+  日本酒類:
+    google_drive:
+      - "1MpMfW_5mEHJkPjtlTgyglb5EYFEih2Uc"
+
+  SUBARU:
+    google_drive:
+      - "1IRYqUf-wpMKp450QG8-UjT7ez4miDcES"
+
+  JEDI2G:
+    google_drive:
+      - "1h8GVoMQdxPd-hhRMsyv6ayGKsNA-etpo"
+
+
+  コクヨ:
+    google_drive:
+      - "1Dg7Ra5osBM5gvaCvKUudaXf4uiZUVQug"
+      - "1kL3FqFUvJbldTCkHmv9PkQFfQ7eZ0bNU"
 
   LISAテスト1:
     google_drive:
       - "1cxP8tNPWHcXWFug0yZ7Iu5BgFID7hpW6"
 
-#  ユニ・チャーム（CSA）:
-#    google_drive:
-#      - "17JFBa7uLGUzCjhckdpPmFpbYkavTnzSQ"
-#      - "1Y9aDKbWCLiAyJCNg-aHVb4TIHyrYl5ev"
+  ユニ・チャーム（CSA）:
+    google_drive:
+      - "17JFBa7uLGUzCjhckdpPmFpbYkavTnzSQ"
+      - "1Y9aDKbWCLiAyJCNg-aHVb4TIHyrYl5ev"
+      - "1-OukNsWbF1Nefeu3WZVaxKbqQyhoAPwR"
+      - "1FlQCwYalOHhFwkEc1p1S93JU_4VT_j-7"
+  adkhd（CSA）:
+    google_drive:
+      - "1bUIrC2W73gvAKbqH1v8Cyz5y-fpvC3NM"
+  B-first（CSA）:
+    google_drive:
+      - "1H5RgBtg5kwbUH9p2qgoQycZgbhIRVBi7"
+  DECENCIA（CSA）:
+    google_drive:
+      - "1Q0nDmGojnOxgrR4jD5aEBT9-yDZLWnaK"
+      - "1Aazdy2tLEWi6k4b--5d-m1rws3nhrNKx"
+  HIS（CSA）:
+    google_drive:
+      - "1CpvNrQWD0jmAwXmZvw7uttRha3nia1R_"
+  JECC（CSA）:
+    google_drive:
+      - "1Kn1eR9TIEj6Yi9V-SS6mG0r1vMt6omcT"
+  JRC（CSA）:
+    google_drive:
+      - "1cxjT5odiWq3QRn_2A-gry5VEeeD80xxd"
+      - "1Z-xCOTqpzxxTHRU6JPigqZl3umyoLBKX"
+  "MS（CSA）&ADインターリスク総研":
+    google_drive:
+      - "1h1uc5KWM6wW3N4ncrBQmou4nnZ5n8ips"
+  v.V（CSA）-CUBE:
+    google_drive:
+      - "1cis2qQbZalbS9bREQhZqBzswFzPx63Tc"
+  "z.[（CSA）フォルダテンプレート]":
+    google_drive:
+      - "1f3lFOo_lGaFLdESF6Ohlmx3aVT6SQ8e6"
+  イオンエンターテイメント（CSA）:
+    google_drive:
+      - "1DhbKJXDDWocElZU2J9YujUbdpOqKBKkU"
+  オープンアップグループ（CSA）:
+    google_drive:
+      - "1WqtkMdYWc3S3H0nMJ92aZe1N31g-EtDo"
+  オルガノ（CSA）:
+    google_drive:
+      - "1MXOvueDd0cO65UT7y1X_O27Sk4BIz5Zv"
+      - "1U-tzcZ6GwmnC9lZt1bv0S5BfguXDfbat"
+  キューサイ（CSA）:
+    google_drive:
+      - "1WMEy8i90ez4SXHCx0fYCHJn7zTwI-_x3"
+  しまむら（CSA）:
+    google_drive:
+      - "13O5A_oU1FJuY_llaoR6gyHYAPAZYNc86"
+  パソナグループ（CSA）:
+    google_drive:
+      - "1JJuYavZ-gimxFvyBY9mdzsXQ0B_vJ1Ju"
+      - "1gDAYd6dkQLzrxrFrQkfHdxIfeEn-vEU9"
+  ブイキューブ（CSA）:
+    google_drive:
+      - "1awJymnZcc102q76jpdSGg1wODFkRyhQr"
+  マイナビ（CSA）:
+    google_drive:
+      - "1IAlLMe8U7kYurrSpak-Sj3rFX6uQR4X-"
+      - "1Q-z0EiSXIz6Zj-IGW3udkTqcZWuPXmCq"
+  ヤーマン（CSA）:
+    google_drive:
+      - "1QYFNoFzEqUF_qT9BWlwTvuBv5jt8iKrN"
+  ユーシーカード（CSA）:
+    google_drive:
+      - "1o4nk7FqfKFtNUvsXgi867N0Z41ATZjW-"
+  王子ネピア（CSA）:
+    google_drive:
+      - "1QUHYxtyXdW1C_6LZW9Odes-Mw8IJ1D6l"
+      - "1iqzPM0KtgBXlqxW78tkFldMQL3TCBHFC"
+  西武ライオンズ（CSA）:
+    google_drive:
+      - "1F5ewMfQ6DA5tpAWGCgPcPG-O_XiRSjtY"
+  千葉ロッテマリーンズ（CSA）:
+    google_drive:
+      - "1Lr7OGSewvREmQVy1rg5651fyaBwgl-ha"
+  大正製薬（CSA）:
+    google_drive:
+      - "1Dr5Z_F7S8O1g2Esvur4QVJG19kKX4AEj"
+  電通デジタル（CSA）:
+    google_drive:
+      - "14pE8HfJj1G8Nydq-KGUF2k6FY2aqLeGv"
+      - "10aHloyQM-N48kNDopCxJFiKHVgwP0hri"
+  日亜鋼業（CSA）:
+    google_drive:
+      - "1Ap8aufo_eKzERXrgpvpbMhP02gzrUzYu"
+  日鉄エンジニアリング（CSA）:
+    google_drive:
+      - "1P2KGa3oqll2jVpqA3a3vi_lgDDFn86EQ"
+  富士急行（CSA）:
+    google_drive:
+      - "19LKKlaWcEiKUn1xn6OYEU2HGMxgZGJ0y"
+  福岡地所（CSA）:
+    google_drive:
+      - "1_HHd6GDR5zgb12Co-NZhXmFbE9U5JjVc"
 
-#  adkhd（CSA）:
-#    google_drive:
-#      - "1bUIrC2W73gvAKbqH1v8Cyz5y-fpvC3NM"
-#  B-first（CSA）:
-#    google_drive:
-#      - "1H5RgBtg5kwbUH9p2qgoQycZgbhIRVBi7"
-#  DECENCIA（CSA）:
-#    google_drive:
-#      - "1Q0nDmGojnOxgrR4jD5aEBT9-yDZLWnaK"
-#  HIS（CSA）:
-#    google_drive:
-#      - "1CpvNrQWD0jmAwXmZvw7uttRha3nia1R_"
-#  JECC（CSA）:
-#    google_drive:
-#      - "1Kn1eR9TIEj6Yi9V-SS6mG0r1vMt6omcT"
-#  JRC（CSA）:
-#    google_drive:
-#      - "1cxjT5odiWq3QRn_2A-gry5VEeeD80xxd"
-#  "MS（CSA）&ADインターリスク総研":
-#    google_drive:
-#      - "1h1uc5KWM6wW3N4ncrBQmou4nnZ5n8ips"
-#  v.V（CSA）-CUBE:
-#    google_drive:
-#      - "1cis2qQbZalbS9bREQhZqBzswFzPx63Tc"
-#  "z.[（CSA）フォルダテンプレート]":
-#    google_drive:
-#      - "1f3lFOo_lGaFLdESF6Ohlmx3aVT6SQ8e6"
-#  イオンエンターテイメント（CSA）:
-#    google_drive:
-#      - "1DhbKJXDDWocElZU2J9YujUbdpOqKBKkU"
-#  オープンアップグループ（CSA）:
-#    google_drive:
-#      - "1WqtkMdYWc3S3H0nMJ92aZe1N31g-EtDo"
-#  オルガノ（CSA）:
-#    google_drive:
-#      - "1MXOvueDd0cO65UT7y1X_O27Sk4BIz5Zv"
-#  キューサイ（CSA）:
-#    google_drive:
-#      - "1WMEy8i90ez4SXHCx0fYCHJn7zTwI-_x3"
-#  しまむら（CSA）:
-#    google_drive:
-#      - "13O5A_oU1FJuY_llaoR6gyHYAPAZYNc86"
-#  パソナグループ（CSA）:
-#    google_drive:
-#      - "1JJuYavZ-gimxFvyBY9mdzsXQ0B_vJ1Ju"
-#  ブイキューブ（CSA）:
-#    google_drive:
-#      - "1awJymnZcc102q76jpdSGg1wODFkRyhQr"
-#  マイナビ（CSA）:
-#    google_drive:
-#      - "1IAlLMe8U7kYurrSpak-Sj3rFX6uQR4X-"
-#  ヤーマン（CSA）:
-#    google_drive:
-#      - "1QYFNoFzEqUF_qT9BWlwTvuBv5jt8iKrN"
-##  ユーシーカード（CSA）:
-##    google_drive:
-##      - "1o4nk7FqfKFtNUvsXgi867N0Z41ATZjW-"
-#  "ユニ（CSA）・チャーム":
-#    google_drive:
-#      - "13ADYaJAIbVkjHRSdowPDxu9M89H4AcPj"
-#  王子ネピア（CSA）:
-#    google_drive:
-#      - "1QUHYxtyXdW1C_6LZW9Odes-Mw8IJ1D6l"
-#  西武ライオンズ（CSA）:
-#    google_drive:
-#      - "1F5ewMfQ6DA5tpAWGCgPcPG-O_XiRSjtY"
-#  千葉ロッテマリーンズ（CSA）:
-#    google_drive:
-#      - "1Lr7OGSewvREmQVy1rg5651fyaBwgl-ha"
-##  大正製薬（CSA）:
-##    google_drive:
-##      - "1Dr5Z_F7S8O1g2Esvur4QVJG19kKX4AEj"
-#  電通デジタル（CSA）:
-#    google_drive:
-#      - "14pE8HfJj1G8Nydq-KGUF2k6FY2aqLeGv"
-#  日亜鋼業（CSA）:
-#    google_drive:
-#      - "1Ap8aufo_eKzERXrgpvpbMhP02gzrUzYu"
-#  日鉄エンジニアリング（CSA）:
-#    google_drive:
-#      - "1P2KGa3oqll2jVpqA3a3vi_lgDDFn86EQ"
-#  富士急行（CSA）:
-#    google_drive:
-#      - "19LKKlaWcEiKUn1xn6OYEU2HGMxgZGJ0y"
-#  福岡地所（CSA）:
-#    google_drive:
-#      - "1_HHd6GDR5zgb12Co-NZhXmFbE9U5JjVc"
+  ML案件（CSA）:
+    google_drive:
+      - "1wN9o945jwVGdbgBkA4LXj6BnWjFwIGtC"
+  ENEOS-Materials-ENEOSマテリアル（CSA）:
+    google_drive:
+      - "1CndKKzeCd-DiiZIyKBe7fWXmizJqDsLD"
+  SUMITOMO-MITSUI-TRUST-CLUB-住友三井トラストクラブ（CSA）:
+    google_drive:
+      - "1KZNQHEXMO7ZA8COw2UViZ6af6zbo1UOm"
+  UTグループ（CSA）:
+    google_drive:
+      - "1MxH_DsTGIGvQ-8ADvOfXNaEq5lulQoRW"
+  キヤノンマーケティングジャパン（CSA）:
+    google_drive:
+      - "18tTF346v7F3G3RbomJd_anAsQWD-vmAA"
+  Dydo-GHD-ダイドーグループホールディングス（CSA）:
+    google_drive:
+      - "1OX7rbDmr0jnK8eukaiSWJ8fpAOB9jM9K"
+  Hitachi-GLS-日立グローバルライフソリューションズ（CSA）:
+    google_drive:
+      - "1VedLvNEmHKVYVvwyJkA7rdbTsz0k8mdl"
+  MORISAWA-モリサワ（CSA）:
+    google_drive:
+      - "1ir-S-OhpH-vzMLlFLvYSp3kgDV7F8F7F"
+  AISIN-TAKAOKA-アイシン高丘（CSA）:
+    google_drive:
+      - "1TQrBcFPvjU5lXRTGFYF9KPkk9D9wz5DR"
+  MITSUBISHI-ESTATE-三菱地所（CSA）:
+    google_drive:
+      - "1jwbeLfzo-PY3WM1yEabXPs9yhDJ0CdNv"
+  京セラ株式会社（CSA）:
+    google_drive:
+      - "1lr-KCDRUkXt0JPGfAoDNOUTgs21m2lQB"
+  TERAOKA-寺岡精工（CSA）:
+    google_drive:
+      - "1t59_-tfJlvQEPFHmIiyJ-WaOxk2mqP13"
+  NISHIMATSU-西松建設（CSA）:
+    google_drive:
+      - "15-VlZrL2kqWpRDhO4xraoEzyqG_SIE5e"
+  ハーブ健康本舗（CSA）:
+    google_drive:
+      - "1dPNCrs3U71tnB4Xo4klWEPhjdqqnXGK2"
+  JR東日本クロスステーション（CSA）:
+    google_drive:
+      - "1EUeiRF71w_6j1wUr28ONF5XfpNsv0HFM"
+      - "1FlQCwYalOHhFwkEc1p1S93JU_4VT_j-7"
+  ROYAL-ロイヤルグループ（CSA）:
+    google_drive:
+      - "1KocCtZAz0QjKlbkioBJRc8bZY0VumITD"
+  エスエイティーティー株式会社（SATT）（CSA）:
+    google_drive:
+      - "1_zJ7ZUyQUjQS4mwbSEQsljvbGrVsg9oB"
+  MSOL（CSA）:
+    google_drive:
+      - "1NJo5dZFPxueqjiO6dUQKPDXhKsh_7f9L"
+  finetoday-ファイントゥデイ（CSA）:
+    google_drive:
+      - "1bZ_pby1UWdOlIAqmIFxlFnOa50Hu-yQN"
+  松屋銀座（CSA）:
+    google_drive:
+      - "1ChZO6tWYB_kY-NmwJlRJp4YPwcj1Jc_E"
+  モデラート株式会社（CSA）:
+    google_drive:
+      - "1_JR3HR9BlGQnpTQgg8jTmWuBmmGwe6q-"
+  Hokkaido-gas-北海道ガス（CSA）:
+    google_drive:
+      - "1l71uZtAtCmN5LsXzHSDakOT5xrmDyVmx"
+  PERSOLCAREER-パーソルキャリア（CSA）:
+    google_drive:
+      - "1cPzMEMTlFSjMM8kSSN59kFaj0HJoGOgY"
+  dinos-ディノス（CSA）:
+    google_drive:
+      - "1GZ_Pctc11Zbk4Vhn2naMYzAUb6VnykJl"
+  ベイシア（CSA）:
+    google_drive:
+      - "1NVjbM2noSGwCwx8eKhrYZbER85HYcDdZ"
+  Hasegawa-はせがわ（CSA）:
+    google_drive:
+      - "1ncJyssA5r5W5RgHYcABH2ODVX_xqnEIV"
+  ミスターマックス（CSA）:
+    google_drive:
+      - "1dq9P1tX0nII1RmBKA4Hqd8ZZKKi6_yuY"
+  Porche-ポルシェ（CSA）:
+    google_drive:
+      - "1kFFJ8OIbS465PlijzlaUz9e5ibIXooSQ"
+  RYODEN（CSA）:
+    google_drive:
+      - "14VePmQ0P5pP39CbFQlHIf_oOso2zREa_"
+  HASEGAWA-はせがわ（CSA）:
+    google_drive:
+      - "1cN1P5XcKTzaa-L90nHNwsV2o3k_Bmo7a"
+  NIHONSHURUI-日本酒類（CSA）:
+    google_drive:
+      - "1vFSHSNw7Q7jCCdtDmoC321cG_9aaMwXo"
+  ソニーネットワークコミュニケーションズ（CSA）:
+    google_drive:
+      - "1I-GKWQXXMbZ_Pqf8TEisxdZ-DmK89Fr0"
+  ezaki_glico-江崎グリコ（CSA）:
+    google_drive:
+      - "1o-kFzoDNH8k_7HemXmwqXntcWekov60b"
+  データマネジメント（CSA）:
+    google_drive:
+      - "1hAnO1EzwoB-8LBmtnyVZFlROwQwOyQJg"
+  KS_Holdings-ケーズホールディングス（CSA）:
+    google_drive:
+      - "1Bckix2aARJyxvPHXPXVKtuZbZ31-9cH7"
+  ユニリーバ・ジャパン・カスタマーマーケティング（CSA）:
+    google_drive:
+      - "1gRfc7IZ2HQLJDpfwA8oqiq0b5wEhBU-W"
+  Daimaru_Matsuzakaya-大丸松坂屋（CSA）:
+    google_drive:
+      - "1SHv66K4_pGjDxaAKakXcClGpEXk5hN2C"
+  DAIKOKU-ダイコク電機（CSA）:
+    google_drive:
+      - "1WJBvIAVHyoBQgbXzMK_DKIf5MVnahYL7"
+  TAISHO_PHARMACEUTICAL-大正製薬（CSA）:
+    google_drive:
+      - "142LxRx-FoXlsKjMDrBpvWQLyJAbt5hfg"
+  ONWARD-オンワード（CSA）:
+    google_drive:
+      - "14kOyWDs2kQEdgbzJLft6I_DtA__bHXP3"
+  NITTO_KOGYO-日東工業（CSA）:
+    google_drive:
+      - "1Arb9STopESt8RZ7jDa66lW0GnBcBrf8w"
+  Gaitame_Com-外為どっとコム（CSA）:
+    google_drive:
+      - "1n68gqFV0gGkKkPwKUILe_aJ07daW024F"
+  HYAKUJUSHI_BANK-百十四銀行（CSA）:
+    google_drive:
+      - "1GSZWoMJMABAPEOM3D0EV96Z0w5vbbWA0"
+  NIPPON_PAINT-日本ペイント（CSA）:
+    google_drive:
+      - "1A6RCNvo7v34GQ6ZVv2hvMf_C3s-H2jV-"
+  coconala-ココナラ（CSA）:
+    google_drive:
+      - "1ACtFDVQ4Y6X2i1MeeU1X7LzK5o_xX1dl"
+  Trygroup-トライグループ（CSA）:
+    google_drive:
+      - "1bZNvazIJIcCaP2BoHenSYoRrVh2y3b6h"
+  Shionogi-塩野義製薬（CSA）:
+    google_drive:
+      - "1cR2-bqis7Wn3h8uhWoQcpwpRk3gQCchs"
+  ZojirushiCorporation-象印マホービン（CSA）:
+    google_drive:
+      - "1yJFKmIrf2UHiQH2AW3X0XbLR0bltkUK4"
+  パイン株式会社（CSA）:
+    google_drive:
+      - "1ntK4HMvJjh-qNidfUvxJB7AW-fozg94T"
+  SAN-A(サンエー)（CSA）:
+    google_drive:
+      - "1hEOQ_aknmBH76hp4szv1qTkQJ9O893iZ"
+  THK（CSA）:
+    google_drive:
+      - "12EYhPw2dxpqMEENoMRiUyFQHzggdUqno"
+  codips-地域創生Coデザイン研究所（CSA）:
+    google_drive:
+      - "1aQQPl-wJFxiNT1YoChpboH2j5H0xFTIf"
+  Digital_Agency-デジタル庁（CSA）:
+    google_drive:
+      - "19KHHlXoy1YKk7P85ndlB35bekrRQcY5l"
+  ポーラ・オルビスHD（CSA）:
+    google_drive:
+      - "12QC_zlG7waP4oAGCx9dE6AVpCU4rhB8k"
+  NETPROTECTIONS-ネットプロテクションズ（CSA）:
+    google_drive:
+      - "17p6yEni32h9XMIi4In6gsZUDAIGF8i-n"
+  TOKYU（CSA）:
+    google_drive:
+      - "1jvP38TJ1cKmiO2C_5gOcdPWGPrRR7fm2"
+  FUJITA-フジタ（CSA）:
+    google_drive:
+      - "10r9K40OjlQLnI1UsQgdxHrZ2HFbvvBCe"
+  SUMITOMO_CORPORATION-住友商事（CSA）:
+    google_drive:
+      - "19Ce0IfCFNkt3EPi67wPB8eUeoFKQVUpV"
+  TOYOTA-トヨタ自動車（CSA）:
+    google_drive:
+      - "1JOZI4EYO8JdTLwn9p2yc_8Hy02AxOk0y"
+  COSMO_ENERGY_MARKETING-コスモ石油マーケティング（CSA）:
+    google_drive:
+      - "1yPBv_574HfgZsqLise141LhvMyIACKt5"
+  JSR（CSA）:
+    google_drive:
+      - "1iHgDzXrvkK7JV9cMF8HmqHkX042pEgZC"
+  YAMAHA-MOTOR（CSA）:
+    google_drive:
+      - "1TwpL-bGdsr3ftNE93XuTikebLvGo4j6E"
+  TOKYU_TECHSOLUTIONS（東急テックソリューションズ）（CSA）:
+    google_drive:
+      - "1PjYSCdvuRcFKiyISdHTsuA6RACe-moiw"
+  HANASAKU LIFE INSURANCE（はなさく生命保険株式会社）（CSA）:
+    google_drive:
+      - "1DXe5sIW-dOODyUZqZbjCgrlhnh9a2StD"
+  H2Oリテイリング（CSA）:
+    google_drive:
+      - "10M9bqqWkByeD_BcHrhxzTM1UR5RutJca"
+  ダイコク電機（CSA）:
+    google_drive:
+      - "1-r9bjEFP-GqwhyeuCWMcv0xyx5XMe8P_"
+  三菱総研（CSA）:
+    google_drive:
+      - "18CRiZ2xOZZkxI9V635dSQEX7OPJffDRo"
+  Hermes（CSA）:
+    google_drive:
+      - "1e0A2wvwAv0fpWCmfA2xfovGyYKroALHr"
+  AlphaTheta（CSA）:
+    google_drive:
+      - "1ZIBMF_8stWiTK7-ohe3TB8cZTWMO_M7K"
+  SBJ Asteriaマイグレーション（CSA）:
+    google_drive:
+      - "1KD85xofpqbU6xDCWEcqgFZ_uu9q2ENhv"
+  WIZ（CSA）:
+    google_drive:
+      - "166R0H89Na94EGXPJ2KEcCthULapSPMzo"
+  nextyelectronics（CSA）:
+    google_drive:
+      - "1rWuW3zVQyQyqMRbCVuAnPmsRgE157mKK"
+  日本工営（CSA）:
+    google_drive:
+      - "1aW5bmvBgaf25AGGtYb52hRxzKjTrGj9o"
+  FLO_JAPON（CSA）:
+    google_drive:
+      - "19TG9y6FWrCYZdreTQ_t7x6lFId1quwF8"
+  MUJI-良品計画（CSA）:
+    google_drive:
+      - "16mj2VlrVWTJv5feC_oOVgkDKa9OYlMRw"
+  SKYLARK（CSA）:
+    google_drive:
+      - "1bTAuJ-qlWpEhir7KW3SfqT8m36MxagMK"
+  PLUS（CSA）:
+    google_drive:
+      - "1S7KN_AhDSxO8K16pyOjvYGdbYPh-W_D9"
+  YAMAN-BigQueryデータマート構築（CSA）:
+    google_drive:
+      - "15GNp4abf82gMvJjnXA6EX5wSJEuNxrDB"
+  Sendai-si-仙台市（CSA）:
+    google_drive:
+      - "1_D3LSxFhkgafstY6UdQBW922NRy4-ZZF"
+  OWNDAYS（CSA）:
+    google_drive:
+      - "12evBzXQ2hrc_4aapht3Vw4R3OtfLZoW6"
+  WOWOW-DMP刷新（CSA）:
+    google_drive:
+      - "12WekUbfsFUkM1p7YOIVBy7e3pd6-a0OA"
+  SHINNIHONSEIYAKU-新日本製薬（CSA）:
+    google_drive:
+      - "1xivfBRoETM32Q-NCp8kAL0igNJSPpzej"
+  第一三共（CSA）:
+    google_drive:
+      - "10tfuDhfrAZ3VlQH-cHqDLr914T5KNgb7"
+  WOWOW-Redash基盤構築（CSA）:
+    google_drive:
+      - "10qchpRQOoVmwfh5QjAuuS7HeoN7_bFVu"
+  ジー・サーチ（CSA）:
+    google_drive:
+      - "1TgHfgcqlML7vc3Wsxr3X9gBWdX1m5PpA"
+  GoodyPoint（CSA）:
+    google_drive:
+      - "1Nk647YFzKwITSgdK-f6kzKsOXoan0XjE"
+  NIHON_DENSI-日本電子JEOL（CSA）:
+    google_drive:
+      - "1ceepvqTY1WD7fI3WI7tL8oAnIhX7H8jV"
+  日建設計 コンストラクション・マネジメント（CSA）:
+    google_drive:
+      - "1bGIwmN1QqrqxiEu91ixeeYgByxxTQEZ4"
+  Fukuoka_Financial_Group（CSA）:
+    google_drive:
+      - "1CprOhd-FM9BRBh33s3uBaGKJNcB3Q2Al"
+  キリンビバレッジ（CSA）:
+    google_drive:
+      - "1bKbrCEK4o6FAiljshyNB9z01XY9DZuwC"
+  smbc_card（CSA）:
+    google_drive:
+      - "17fEG_BiPrmhyCWuukyclWEu2H4B9ktgC"
+  JPCERT（CSA）:
+    google_drive:
+      - "1b5gDflgQfQzgxqncJcTEL88J3C-03s8T"
+  博報堂テクノロジーズ（CSA）:
+    google_drive:
+      - "18L-ZD7uZ9pCXwUqt7PWpRh7a_0kciI8V"
+  NIHON_SEIKO_日本精工（CSA）:
+    google_drive:
+      - "1K8fsuAHayDVvWsIddM3VxjEqPufkuLIJ"
+  ブルボン（CSA）:
+    google_drive:
+      - "1Kr1pmZe8nTnfZCvwg7DGubOPHAIyeCol"
+  Keihan_Holdings（CSA）:
+    google_drive:
+      - "1frbAKXHHMFPsgf-N3G3sfM3pVXY6DvCh"
+  HITACHI_KENKI(HCS-日立建機)（CSA）:
+    google_drive:
+      - "15oFFoBxlGB0NUuNFCuXNSh2wNE-R2JF7"
+  シスメックス（CSA）:
+    google_drive:
+      - "15nxjvGfTsvZZXf4Crdg9BN31sMz4n_gY"
+  MIZUHO_FINANCIAL(みずほフィナンシャル)（CSA）:
+    google_drive:
+      - "1lf7uV6z6MV6Cs3fHZk349YJfcp_0Sn4L"
+  TBS_HD(TBSホールディングス)（CSA）:
+    google_drive:
+      - "1qrE0Lws1-7FtV-AlSSYd4s4w5wJApN4n"
+  Kaopiz（CSA）:
+    google_drive:
+      - "1vGZID9OSB8sCoaTXBS5C9lLNim_ZQd4C"
+  Stripe（CSA）:
+    google_drive:
+      - "1xJQ-7ThirOuZQBkcV1tWof8vmXaemJ7q"
+  KORA（CSA）:
+    google_drive:
+      - "1x6qmF1ENJcxOYXmRAVs0YvJtI8zm3Ocy"
+  ミネベアミツミ（CSA）:
+    google_drive:
+      - "1fEij2e9VRN2IC4o-EUNJPAeIvIZfuZVz"
+  MitsuiSumitomoCard（CSA）:
+    google_drive:
+      - "1A5tr5Ab8XppJYPFl_9CRgtj1iieBkFmi"
+  Nomura（CSA）:
+    google_drive:
+      - "1QmM0B8eq7j1z0Cvb5VlfOzB5krVn7AFt"
+  NTTイノベーティブデバイス（CSA）:
+    google_drive:
+      - "1DF-f-jz9F5gbqFXFImFiPyX8HSPZtHgq"
+  SEGA（CSA）:
+    google_drive:
+      - "1F36ygEk5ojTFwq5OLx0e-FVs7RNUAj0l"
+  キリンHD（CSA）:
+    google_drive:
+      - "1wHWQgA1mjBY0JEFMpZC-CioOl_ZNyEDD"
+  野村不動産（CSA）:
+    google_drive:
+      - "1HpPChrv2N-HZJK5oX13C6w9T_wG8JAqZ"
+  相鉄ホールディングス（CSA）:
+    google_drive:
+      - "1yyFQopjbVrLBidRQY5bFwszh93BhEYeR"
+  モイネットシステム（CSA）:
+    google_drive:
+      - "1Gaa0eGj5sHdmvOE_srapR5iTemudYCt_"
+  MonotaRO（CSA）:
+    google_drive:
+      - "1inU7WkecFo0R7bwyWe-ZtjT8ccgRljZP"
+  ソニーグループ（CSA）:
+    google_drive:
+      - "1v8w1qAJW93AXlYJW80pT4X-QfHiIrRZl"
+  くすりの窓口（CSA）:
+    google_drive:
+      - "15BhQvC0dsaGhzAMOc-FFtVvQMh1Qj8ri"
+  アクシオ（CSA）:
+    google_drive:
+      - "16iRtc67TN_3r-z64uScJki9n-7XYUDjh"
+  日本放送協会（CSA）:
+    google_drive:
+      - "1wQ6f7e0WWaCbzcVwryUlSaAX7F4CdWpy"
+  NTT-AE（CSA）:
+    google_drive:
+      - "11tsFCVDjWo_Vw6aM3c4vEybMHaVJMgSB"
+  ゲート・ワン（CSA）:
+    google_drive:
+      - "1r5uDc21vL9nPljs4iSQS9jr0osNmAYjw"
+  DTC（CSA）:
+    google_drive:
+      - "1rL6rXKIA85atfhZIfUJVzIW4y4mWx0KI"
+  クリエイトエス・ディー（CSA）:
+    google_drive:
+      - "1oGw47ymtGC7sLFbXkzBIl8Aoe9Ni4dKt"
+  ハーゲンダッツ(fromNTT東日本)（CSA）:
+    google_drive:
+      - "1sd4ueM1DfpGmwFbIQ_hd7kR3xzEb81wk"
+  E-grant（CSA）:
+    google_drive:
+      - "1OK2RvWU7YFXCXFqESS38sQ-qZ7zy9Qs8"
+  JKA（CSA）:
+    google_drive:
+      - "1QwusYfbtBZ6kgj53PTKDNcjlRLT3RCAj"
+  Daiichi-alcohol-第一アルコール様（CSA）:
+    google_drive:
+      - "1_yCNPzOX1C_Z8axFS9Dk03Vd-3bPgujn"
+  KADOKAWA（CSA）:
+    google_drive:
+      - "14zryz8_EsNmgbdCe62SlDVJXjEoJJ8vc"
+  Unicharm_DTC（CSA）:
+    google_drive:
+      - "1jlyVALw2hpnCKSONrpP1gD_ms1FQRHAT"
+  TAKIRON-CI（CSA）:
+    google_drive:
+      - "1EWnSl3u5egtvBeKElrWtp7xd7s0yOH2w"
+  Temp（CSA）:
+    google_drive:
+      - "1LclOS4zIO5wZSWGOFVmFMHsfAQ3HPtYc"
+  TERUMO様（CSA）:
+    google_drive:
+      - "1uqre76UmAY_Xx7e5hCJ2N0IAR8-8XR6U"
+  矢崎総業（CSA）:
+    google_drive:
+      - "1-AqA8D8E_xgzV78U44DXWDvfWnxhswwH"
+  イオンモール33連携（CSA）:
+    google_drive:
+      - "1OYHI3aase2LvSnIwYW2QMLHQAd1XBoTU"
+  NTTドコモ（CSA）:
+    google_drive:
+      - "1SGJIm0DClNeeQyiIir9VYmNh0f32YgP7"
+  ホンダトレーディング（CSA）:
+    google_drive:
+      - "1IRmFTfvOw-ls8ugrBaypA1m7sAxK8pKO"
+  川崎重工様（CSA）:
+    google_drive:
+      - "12CxXBISxxqYFYlXH9f-MvtTA9nM8VE80"
+  Pioneer様（CSA）:
+    google_drive:
+      - "10kzfTFDAyeGlG4bUmw5u7QfketncQtgZ"
+  YKK様（CSA）:
+    google_drive:
+      - "1vrBAemkirdbUy5p-lSD8DulM3pYgQuwr"
+  積水ハウス（CSA）:
+    google_drive:
+      - "1DRVxiHbBwnIjTLe_KUwbStQJU2l4-pfx"
+  TreasureData（CSA）:
+    google_drive:
+      - "11hWPXDqsGmxiP3R7Vf8wWjxVZmuHr9ig"
+  COPILOT（CSA）:
+    google_drive:
+      - "1gw_NGJV9g2VriX5Nlti2b8lhq0Nw54CW"
+  Template（CSA）:
+    google_drive:
+      - "1Eq3324hmrO3JI1BxrILaSaKxKysynL5c"
+  NITTSU（CSA）:
+    google_drive:
+      - "1JmvPoo_XgK9DZeMF_5iJpJaK_ZL8hjJ4"
+  Informaticaトレーニング資料（取扱注意）（CSA）:
+    google_drive:
+      - "18dCSqDYBgNm0qRaXPxGYp42_hgOBVm9k"
+  任天堂様PoC_検査ログ収集分析システム（CSA）:
+    google_drive:
+      - "13hmiIvPMB0mFXMZHEousxz4pPI5RUu__"
+  あいおいニッセイ同和損害保険（CSA）:
+    google_drive:
+      - "1hUdnsDC_djCSVkCR_SZNoXkGy3uhZ8VB"
+  シグニティ（CSA）:
+    google_drive:
+      - "15pmwiAdmvFaYs96NtikZXNNvhRPlg449"
+  SUBARU様-お見積り関連（CSA）:
+    google_drive:
+      - "1g5L-BK_lEo0-hPoj2jOhUwhiBB7IaA0k"
+  WOWOW様_DMPへのデータ抽出機能（CSA）:
+    google_drive:
+      - "1IRYqUf-wpMKp450QG8-UjT7ez4miDcES"
+  ユナイテッドアローズ（CSA）:
+    google_drive:
+      - "1v2mSbue2IEApHUUXFo1aAhe9KSv-YRga"
+  ヤンマー（CSA）:
+    google_drive:
+      - "1puOUXVWaiK3Gaj6ElkfsXqYF0YQwGQ3c"
+  ダイエー（CSA）:
+    google_drive:
+      - "1S_jamNfOppd7ZPFeydWDhPlhSoRrfGrJ"
+  MTG（CSA）:
+    google_drive:
+      - "13i7J86GAbGwjlZAm4Ty0PgWlN0slr_kh"
+  サントリーシステムテクノロジー（CSA）:
+    google_drive:
+      - "13cw397gB3p4Lm0vEB86Ux6n4jguZqGqF"
+  JR東日本ビルテック（CSA）:
+    google_drive:
+      - "1NEIH7RaUib0aQBdcbEoNTZ4bXIh29TCi"
+  三菱マテリアル（CSA）:
+    google_drive:
+      - "1MTnj5al9d-Gtk7zqq2NkPi5c8kbVn-eO"
+  Jリーグ（CSA）:
+    google_drive:
+      - "1Cup5UNtiWY3J-oL71XfWoRWmk-_bWq1B"
+  東邦ガス（CSA）:
+    google_drive:
+      - "1Vs8KjKhq5kZAFRqqyfQMj7hpNJfZNQlV"
+  サントリー（CSA）:
+    google_drive:
+      - "1WAhuXhe8jgaUG54etgYMKxkcxGdM-Plc"
+  カゴメ（CSA）:
+    google_drive:
+      - "1LQ2MA5Vo_YwJNoVbRpnMIxnTrKW3ATAm"
+  ミン(ベルーナ)（CSA）:
+    google_drive:
+      - "1ViLy7QNIoG2CXRlfq5nyl3-nwCxw2_LN"
+  ファミリーネット・ジャパン（CSA）:
+    google_drive:
+      - "1faapBkVgu9YCMz3GZBhFhPkCSPb9W8DW"
+  鹿島建設（CSA）:
+    google_drive:
+      - "1z8tnLVwLOiqjV7VKRX1FV1uvvK-4-GSc"
+  オカムラ_PureData→Redshift移行（CSA）:
+    google_drive:
+      - "1XrVEusLjsfR8lpPedaJEm2jtP_z1erb0"
+  任天堂_UPPシステム開発（CSA）:
+    google_drive:
+      - "1-1HOmfMaoWTCAX7Y5bEkvDzbNDvq-r0y"
+  ビデオマーケット（CSA）:
+    google_drive:
+      - "10KnUjHPeVsgEa61gV2JFTgXyI4rrNgFN"
+  オンワード樫山（CSA）:
+    google_drive:
+      - "1--4cbyu0XOKZTT7vYFDN1zpux-a3W_kp"
+  コスモスホテルマネジメント（CSA）:
+    google_drive:
+      - "1-6emPHnAf-WntYkBR80dTyCa_ZirCe08"
+  カシオ（CSA）:
+    google_drive:
+      - "1-4XnguYcqDR8vzixPUp2X9Q-TgHgj7Og"
+  明和地所（CSA）:
+    google_drive:
+      - "1-mzNvl5J6lwJBwlp6CE52Zjn2UziywCm"
+
+
+
 
 # グローバルオプション設定
 options:

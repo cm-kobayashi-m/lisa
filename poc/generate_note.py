@@ -640,7 +640,7 @@ def rag_fusion_search(
     retriever,
     project_name: str,
     base_query: str = None,
-    k: int = 10,
+    k: int = 30,
     num_queries: int = None,
     min_score: float = None,
     apply_time_weighting: bool = True

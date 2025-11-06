@@ -146,7 +146,7 @@ class ProposalGenerator:
         if llm:
             self.llm = llm
         else:
-            model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-exp")
+            model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
             self.llm = ChatGoogleGenerativeAI(
                 model=model_name,
                 google_api_key=api_key,
@@ -253,11 +253,111 @@ JSON形式のみを出力してください（説明や追加テキストは不�
                 "impact": ""
             }
 
+    def _search_hearing_sheets(
+        self,
+        project_name: str,
+        k: int = 30
+    ) -> List[Tuple[Document, float]]:
+        """
+        同一プロジェクトのヒアリングシートを検索
+
+        Args:
+            project_name: プロジェクト名
+            k: 検索する件数
+
+        Returns:
+            ヒアリングシートのリスト
+        """
+        if not project_name:
+            print("    [INFO] プロジェクト名が指定されていないため、ヒアリングシート検索をスキップ")
+            return []
+
+        print(f"    [INFO] プロジェクト「{project_name}」のヒアリングシートを検索中...")
+
+        # フィルタ条件を設定
+        filter_dict = {
+            "$and": [
+                {"project_name": {"$eq": project_name}},
+                {"document_type": {"$eq": "ヒアリングシート"}}
+            ]
+        }
+
+        try:
+            # 汎用的なクエリでヒアリングシートを検索
+            # プロジェクト名とdocument_typeでフィルタリングされるため、
+            # クエリ自体は汎用的なものでOK
+            query = "ヒアリング内容 要件 確認事項 課題 現状"
+
+            # クエリをベクトル化
+            query_vector = self.embeddings.embed_text(query)
+
+            # vector_store.similarity_searchを直接使用（query_vectorを使用）
+            results = self.vector_store.similarity_search(
+                query_vector=query_vector,
+                filter_dict=filter_dict,
+                k=k
+            )
+
+            print(f"    [INFO] {len(results)}件のヒアリングシートを発見")
+            return results
+
+        except Exception as e:
+            print(f"    [WARN] ヒアリングシート検索エラー: {e}")
+            return []
+
+    def _format_hearing_sheets(
+        self,
+        results: List[Tuple[Document, float]]
+    ) -> str:
+        """
+        ヒアリングシート情報をフォーマット
+
+        Args:
+            results: 検索結果のリスト
+
+        Returns:
+            フォーマットされたヒアリングシート情報
+        """
+        if not results:
+            return """### ヒアリング情報
+
+**ヒアリングシートなし**
+
+プロジェクトのヒアリングシートがまだ登録されていません。
+リフレクションノートとソースドキュメントの情報に基づいて提案書を作成します。
+"""
+
+        formatted = "### ヒアリング情報\n\n"
+        formatted += "以下のヒアリングシートの内容を提案に反映しました。\n\n"
+
+        for i, (doc, score) in enumerate(results, 1):
+            # スコアから類似度を計算（距離が小さいほど類似度が高い）
+            similarity = max(0.0, min(1.0, 1.0 - score))
+
+            # メタデータの取得
+            file_name = doc.metadata.get("file_name", "不明")
+            created_at = doc.metadata.get("created_at", "")
+
+            formatted += f"#### {i}. ヒアリングシート（関連度: {similarity*100:.1f}%）\n"
+            formatted += f"- ファイル: {file_name}\n"
+            if created_at:
+                formatted += f"- 作成日: {created_at}\n"
+            formatted += "\n"
+
+            # 内容の抜粋（最大1500文字）
+            content = doc.text[:1500]
+            if len(doc.text) > 1500:
+                content += "...\n"
+
+            formatted += f"**内容抜粋:**\n```\n{content}\n```\n\n"
+
+        return formatted
+
     def _search_similar_proposals(
         self,
         reflection_note: str,
         project_name: str = "",
-        k: int = 5,
+        k: int = 30,
         additional_prompt: Optional[str] = None  # Query Translation用
     ) -> List[Tuple[Document, float]]:
         """
@@ -699,6 +799,7 @@ JSON形式のみを出力してください。
         self,
         project_info: Dict[str, str],
         similar_cases_text: str,
+        hearing_sheets_text: str,  # ヒアリングシート情報を追加
         solution: Dict[str, str],
         plan: Dict[str, str],
         cost: Dict[str, str],
@@ -711,6 +812,7 @@ JSON形式のみを出力してください。
         Args:
             project_info: プロジェクト基本情報
             similar_cases_text: 類似案件情報
+            hearing_sheets_text: ヒアリングシート情報
             solution: ソリューション情報
             plan: プロジェクト計画情報
             cost: 費用見積情報
@@ -787,6 +889,9 @@ JSON形式のみを出力してください。
 ## ソースドキュメント（ヒアリングシート/リフレクションノート）
 {source_document}...
 
+## ヒアリング情報
+{hearing_sheets_text}
+
 ## プロジェクト基本情報
 - 案件名: {project_info.get("project_name", "未設定")}
 - 顧客名: {project_info.get("customer_name", "未設定")}
@@ -830,12 +935,13 @@ JSON形式のみを出力してください。
 
 # 作成上の注意点
 
-1. **顧客目線**: 顧客のビジネス課題を理解し、それに対する解決策を明確に提示
-2. **具体性**: 曖昧な表現を避け、定量的な数値や具体的な実装方法を記載
-3. **説得力**: 類似案件の実績やROI分析を活用して、提案の妥当性を示す
-4. **リスク対策**: リスクを隠さず、対策を明確にすることで信頼性を高める
-5. **読みやすさ**: 見出し、箇条書き、表などを適切に使用して構造化
-6. **Markdown形式**: 完全なMarkdown形式で出力
+1. **ヒアリング内容の反映**: ヒアリングシートで確認された要件や課題を必ず提案書に含める
+2. **顧客目線**: 顧客のビジネス課題を理解し、それに対する解決策を明確に提示
+3. **具体性**: 曖昧な表現を避け、定量的な数値や具体的な実装方法を記載
+4. **説得力**: 類似案件の実績やROI分析を活用して、提案の妥当性を示す
+5. **リスク対策**: リスクを隠さず、対策を明確にすることで信頼性を高める
+6. **読みやすさ**: 見出し、箇条書き、表などを適切に使用して構造化
+7. **Markdown形式**: 完全なMarkdown形式で出力
 
 # 出力
 
@@ -894,7 +1000,7 @@ Markdown形式で完全な提案書を生成してください。
         self,
         source_document: str,
         project_context: Optional[Dict[str, str]] = None,
-        search_k: int = 5,
+        search_k: int = 30,
         additional_prompt: Optional[str] = None  # Query Translation用
     ) -> str:
         """
@@ -916,14 +1022,14 @@ Markdown形式で完全な提案書を生成してください。
         print("=" * 60)
 
         # 1. 基本情報抽出
-        print("\n[1/7] ソースドキュメントから基本情報を抽出中...")
+        print("\n[1/8] ソースドキュメントから基本情報を抽出中...")
         project_info = self._extract_project_info(source_document)
 
         if project_context:
             project_info.update(project_context)
 
         # 2. 類似案件検索（Query Translation対応）
-        print("\n[2/7] 類似案件の提案書を検索中...")
+        print("\n[2/8] 類似案件の提案書を検索中...")
         similar_cases = self._search_similar_proposals(
             source_document,
             project_name=project_info.get("project_name", ""),
@@ -932,27 +1038,36 @@ Markdown形式で完全な提案書を生成してください。
         )
         similar_cases_text = self._format_similar_cases(similar_cases)
 
-        # 3. ソリューション生成
-        print("\n[3/7] ソリューションを生成中...")
+        # 3. ヒアリングシート検索（新規追加）
+        print("\n[3/8] プロジェクトのヒアリングシートを検索中...")
+        hearing_sheets = self._search_hearing_sheets(
+            project_name=project_info.get("project_name", ""),
+            k=3
+        )
+        hearing_sheets_text = self._format_hearing_sheets(hearing_sheets)
+
+        # 4. ソリューション生成
+        print("\n[4/8] ソリューションを生成中...")
         solution = self._generate_solution(source_document, project_info, similar_cases)
 
-        # 4. プロジェクト計画生成
-        print("\n[4/7] プロジェクト計画を生成中...")
+        # 5. プロジェクト計画生成
+        print("\n[5/8] プロジェクト計画を生成中...")
         plan = self._generate_project_plan(source_document, project_info)
 
-        # 5. 費用見積生成
-        print("\n[5/7] 概算費用を生成中...")
+        # 6. 費用見積生成
+        print("\n[6/8] 概算費用を生成中...")
         cost = self._generate_cost_estimate(source_document, project_info)
 
-        # 6. リスク・次ステップ生成
-        print("\n[6/7] リスクと次のステップを生成中...")
+        # 7. リスク・次ステップ生成
+        print("\n[7/8] リスクと次のステップを生成中...")
         risks = self._generate_risks_and_next_steps(source_document)
 
-        # LLMで提案書全体を生成
-        print("\n[7/7] LLMで提案書全体を生成中...")
+        # 8. LLMで提案書全体を生成
+        print("\n[8/8] LLMで提案書全体を生成中...")
         proposal = self._generate_proposal_with_llm(
             project_info=project_info,
             similar_cases_text=similar_cases_text,
+            hearing_sheets_text=hearing_sheets_text,  # ヒアリングシート情報を追加
             solution=solution,
             plan=plan,
             cost=cost,

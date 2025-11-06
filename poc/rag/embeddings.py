@@ -48,7 +48,7 @@ class GeminiEmbeddings:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model_name: str = "models/text-embedding-004",
+        model_name: str = "gemini-embedding-001",
         dimension: int = 1536,
         batch_size: int = 100
     ):

@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
-S3 Vectorsのバケットとインデックスを削除するスクリプト
+S3 Vectorsのバケットとインデックス、または特定のドキュメントを削除するスクリプト
 
 使用方法:
+    # 特定のキーのドキュメントを削除
+    python3 delete_s3_vectors.py --keys key1,key2,key3
+
+    # 1つのキーのドキュメントを削除
+    python3 delete_s3_vectors.py --keys document_key_001
+
     # インデックスのみ削除
     python3 delete_s3_vectors.py --index-only
 
@@ -13,7 +19,7 @@ S3 Vectorsのバケットとインデックスを削除するスクリプト
     python3 delete_s3_vectors.py --bucket my-bucket --index my-index
 
     # Dry-runモード（削除せず確認のみ）
-    python3 delete_s3_vectors.py --dry-run
+    python3 delete_s3_vectors.py --keys key1,key2 --dry-run
 
 警告: このスクリプトはデータを永久に削除します。実行前に必ずバックアップを取ってください。
 """
@@ -21,6 +27,7 @@ import os
 import sys
 import argparse
 import logging
+from typing import List
 from dotenv import load_dotenv
 from rag.vector_store import S3VectorStore
 
@@ -40,9 +47,19 @@ def delete_s3_vectors(
     index_name: str,
     region: str,
     index_only: bool = True,
-    dry_run: bool = False
+    dry_run: bool = False,
+    keys: List[str] = None
 ):
-    """S3 Vectorsのリソースを削除"""
+    """S3 Vectorsのリソースを削除
+
+    Args:
+        bucket_name: S3 Vectorsバケット名
+        index_name: インデックス名
+        region: AWSリージョン
+        index_only: インデックスのみ削除するかどうか
+        dry_run: Dry-runモード
+        keys: 削除するドキュメントのキーリスト
+    """
 
     if dry_run:
         print("\n" + "=" * 60)
@@ -52,10 +69,14 @@ def delete_s3_vectors(
         print(f"  - バケット: {bucket_name}")
         print(f"  - インデックス: {index_name}")
         print(f"  - リージョン: {region}")
-        print(f"  - インデックスのみ: {index_only}")
+
+        if keys:
+            print(f"  - 削除するキー: {keys}")
+        else:
+            print(f"  - インデックスのみ: {index_only}")
         print()
 
-        if not index_only:
+        if not index_only and not keys:
             print("⚠️ 警告: バケット削除により、すべてのデータが永久に失われます")
 
         print("\n実際に削除する場合は --dry-run オプションを外して実行してください")
@@ -69,10 +90,14 @@ def delete_s3_vectors(
     print(f"  - バケット: {bucket_name}")
     print(f"  - インデックス: {index_name}")
     print(f"  - リージョン: {region}")
-    print(f"  - インデックスのみ: {index_only}")
+
+    if keys:
+        print(f"  - 削除するキー: {keys}")
+    else:
+        print(f"  - インデックスのみ: {index_only}")
     print()
 
-    if not index_only:
+    if not index_only and not keys:
         print("🚨 バケット削除により、すべてのデータが永久に失われます 🚨")
 
     confirmation = input("\n本当に削除しますか？ 'yes' と入力してください: ")
@@ -90,7 +115,15 @@ def delete_s3_vectors(
             create_if_not_exists=False  # 自動作成を無効化
         )
 
-        if index_only:
+        if keys:
+            # 指定されたキーのドキュメントを削除
+            print(f"\n指定されたキーのドキュメントを削除中...")
+            deleted_count = vector_store.delete_documents(keys)
+            print(f"✅ {deleted_count}件のドキュメントを削除しました")
+            for key in keys:
+                print(f"  - {key}")
+
+        elif index_only:
             # インデックスのみ削除
             print(f"\nインデックス '{index_name}' を削除中...")
             vector_store.delete_index()
@@ -117,7 +150,7 @@ def delete_s3_vectors(
 
 def main():
     parser = argparse.ArgumentParser(
-        description='S3 Vectorsのバケットとインデックスを削除'
+        description='S3 Vectorsのバケットとインデックス、または特定のドキュメントを削除'
     )
     parser.add_argument(
         '--bucket',
@@ -138,6 +171,11 @@ def main():
         help='AWSリージョン（デフォルト: us-west-2）'
     )
     parser.add_argument(
+        '--keys',
+        type=str,
+        help='削除するドキュメントのキー（カンマ区切りで複数指定可能）。例: key1,key2,key3'
+    )
+    parser.add_argument(
         '--index-only',
         action='store_false',
         help='インデックスのみ削除（バケットは残す）'
@@ -150,12 +188,18 @@ def main():
 
     args = parser.parse_args()
 
+    # keysが指定された場合はリストに変換
+    keys = None
+    if args.keys:
+        keys = [key.strip() for key in args.keys.split(',')]
+
     delete_s3_vectors(
         bucket_name=args.bucket,
         index_name=args.index,
         region=args.region,
         index_only=args.index_only,
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        keys=keys
     )
 
 

@@ -488,7 +488,6 @@ class OptimizedChunker:
 
             # 構造的なチャンク化
             chunks = self._elements_to_chunks(elements, project_name, file_name)
-            print(chunks)
             # ファイルのメタデータを追加
             for chunk in chunks:
                 if "modifiedTime" in file_info:

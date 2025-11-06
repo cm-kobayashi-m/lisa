@@ -36,7 +36,7 @@ class RAGRetriever:
         query: str,
         category: str,
         project_name: Optional[str] = None,
-        k: int = 5
+        k: int = 30
     ) -> List[Tuple[Document, float]]:
         """
         ドキュメント種別でフィルタした類似度検索
@@ -95,7 +95,7 @@ class RAGRetriever:
             return []
 
     def search_similar_documents(
-        self, query: str, project_name: Optional[str] = None, k: int = 5
+        self, query: str, project_name: Optional[str] = None, k: int = 30
     ) -> List[Tuple[Document, float]]:
         """
         類似ドキュメントを検索
@@ -224,7 +224,7 @@ class RAGRetriever:
         return context
 
     def search_by_project(
-        self, project_name: str, query: Optional[str] = None, k: int = 10
+        self, project_name: str, query: Optional[str] = None, k: int = 30
     ) -> List[Tuple[Document, float]]:
         """
         プロジェクト名で検索（クエリはオプション）
@@ -252,7 +252,7 @@ class RAGRetriever:
             )
 
     def get_cross_project_insights(
-        self, query: str, exclude_project: Optional[str] = None, k: int = 5
+        self, query: str, exclude_project: Optional[str] = None, k: int = 30
     ) -> List[Tuple[Document, float]]:
         """
         他プロジェクトからの知見を取得
@@ -301,7 +301,7 @@ class RAGRetriever:
         base_prompt: str,
         query: str,
         project_name: Optional[str] = None,
-        k: int = 5,
+        k: int = 30,
         max_context_chars: int = 5000,
     ) -> str:
         """

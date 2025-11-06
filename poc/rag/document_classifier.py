@@ -105,7 +105,7 @@ class DocumentClassifier:
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY が設定されていません")
 
-        self.model_name = model_name or os.getenv("GEMINI_MODEL", "gemini-2.0-flash-exp")
+        self.model_name = model_name or os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
         self.config = project_config or ProjectConfig()
 
         # カテゴリ情報を取得

@@ -124,7 +124,7 @@ class InternalCRAG:
         self,
         query: str,
         project_name: str,
-        k: int = 10,
+        k: int = 30,
         min_score: float = 0.3,
         use_refinement: bool = True
     ) -> CRAGSearchResult:

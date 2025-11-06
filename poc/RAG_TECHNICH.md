@@ -62,7 +62,7 @@ def clean_text(text: str) -> str:
 # Gemini埋め込みモデル使用
 embeddings = GeminiEmbeddings(
     api_key=api_key,
-    model_name="gemini-embedding-001",  # 768次元
+    model_name="gemini-embedding-001",  # 1536次元
     dimension=1536  # アップサンプリング
 )
 

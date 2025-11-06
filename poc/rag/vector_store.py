@@ -47,7 +47,7 @@ class S3VectorStore:
         self,
         vector_bucket_name: str,
         index_name: str,
-        dimension: int = 768,  # Gemini埋め込みのデフォルト次元
+        dimension: int = 1536,  # Gemini埋め込みのデフォルト次元
         distance_metric: str = "cosine",
         region_name: str = "us-west-2",
         create_if_not_exists: bool = True
@@ -58,7 +58,7 @@ class S3VectorStore:
         Args:
             vector_bucket_name: S3ベクトルバケット名
             index_name: インデックス名
-            dimension: ベクトルの次元数（Gemini: 768）
+            dimension: ベクトルの次元数（Gemini: 1536）
             distance_metric: 距離メトリック（cosine/euclidean）
             region_name: AWSリージョン（Preview対応: us-west-2, us-east-1等）
             create_if_not_exists: 存在しない場合に自動作成するか
@@ -324,7 +324,7 @@ class S3VectorStore:
         self,
         query_vector: List[float],
         category: str,
-        k: int = 5,
+        k: int = 30,
         additional_filters: Optional[Dict[str, Any]] = None
     ) -> List[Tuple[Document, float]]:
         """
@@ -377,7 +377,7 @@ class S3VectorStore:
     def similarity_search(
         self,
         query_vector: List[float],
-        k: int = 5,
+        k: int = 30,
         filter_dict: Optional[Dict[str, Any]] = None
     ) -> List[Tuple[Document, float]]:
         """

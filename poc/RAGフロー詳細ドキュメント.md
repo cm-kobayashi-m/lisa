@@ -98,7 +98,7 @@ sequenceDiagram
          ↓
 ┌─────────────────────────────────────────────────┐
 │ 2. RAGシステム初期化                            │
-│    - GeminiEmbeddings(model="text-embedding-004")│
+│    - GeminiEmbeddings(model="gemini-embedding-001")│
 │    - S3VectorStore(bucket="lisa-poc-vectors")   │
 └─────────────────────────────────────────────────┘
          ↓
@@ -392,7 +392,7 @@ else:
     │                                              │
     │ STEP 1: クエリベクトル化                    │
     │  - embeddings.embed_text(query)             │
-    │  - 768次元ベクトルに変換                    │
+    │  - 1536次元ベクトルに変換                    │
     │                                              │
     │ STEP 2: カテゴリフィルタ設定                │
     │  - filter = {                               │
@@ -465,7 +465,7 @@ else:
 query_params = {
     "vectorBucketName": "lisa-poc-vectors",
     "indexName": "project-documents",
-    "queryVector": {"float32": [0.1, 0.2, ...]},  # 768次元
+    "queryVector": {"float32": [0.1, 0.2, ...]},  # 1536次元
     "topK": 5,
     "returnDistance": True,
     "returnMetadata": True,
@@ -693,8 +693,8 @@ export VECTOR_INDEX_NAME=project-documents
 export AWS_REGION=us-west-2
 
 # Embeddings設定
-export EMBEDDING_MODEL=models/text-embedding-004
-export DIMENSION=768
+export EMBEDDING_MODEL=gemini-embedding-001
+export DIMENSION=1536
 
 # LLM設定
 export GEMINI_MODEL=gemini-2.0-flash-exp

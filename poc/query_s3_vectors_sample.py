@@ -47,11 +47,17 @@ load_dotenv()
 console = Console()
 
 
-def format_metadata(metadata: Dict) -> str:
-    """メタデータを整形して表示用文字列に変換"""
+def format_metadata(metadata: Dict, doc_key: str = None) -> str:
+    """メタデータを整形して表示用文字列に変換
+
+    Args:
+        metadata: ドキュメントのメタデータ
+        doc_key: ドキュメントのキー（オプション）
+    """
 
     # 表示順序を定義
     display_order = [
+        "key",  # ドキュメントキーを最初に表示
         "project_name",
         "file_name",
         "title",
@@ -82,8 +88,14 @@ def format_metadata(metadata: Dict) -> str:
 
     result = []
 
+    # ドキュメントキーが渡された場合は最初に追加
+    if doc_key:
+        result.append(f"  Key: {doc_key}")
+
     # 定義された順序で表示
     for key in display_order:
+        if key == "key":
+            continue  # keyは上で処理済み
         if key in metadata and metadata[key] is not None:
             value = metadata[key]
 
@@ -118,17 +130,27 @@ def format_metadata(metadata: Dict) -> str:
     return "\n".join(result)
 
 
-def display_results(results: List[Tuple[Document, float]], query_text: str):
-    """検索結果を美しく表示"""
+def display_results(results: List[Tuple[Document, float]], query_text: str) -> List[str]:
+    """検索結果を美しく表示
+
+    Returns:
+        検索結果のkeyのリスト
+    """
 
     console.print(f"\n[bold cyan]検索クエリ:[/bold cyan] {query_text}")
     console.print(f"[bold green]検索結果:[/bold green] {len(results)}件\n")
 
     if not results:
         console.print("[yellow]該当するドキュメントが見つかりませんでした。[/yellow]")
-        return
+        return []
+
+    # 結果のkeyを収集
+    keys = []
 
     for idx, (doc, score) in enumerate(results, 1):
+        # keyを収集
+        if hasattr(doc, 'key'):
+            keys.append(doc.key)
         # スコアに基づく色分け
         if score > 0.8:
             score_color = "green"
@@ -149,14 +171,15 @@ def display_results(results: List[Tuple[Document, float]], query_text: str):
         text_preview = doc.text[:300] + "..." if len(doc.text) > 300 else doc.text
 
         # コンテンツ作成
-        content = f"""[bold]プロジェクト:[/bold] {project}
+        content = f"""[bold]キー:[/bold] {doc.key if hasattr(doc, 'key') else 'N/A'}
+[bold]プロジェクト:[/bold] {project}
 [bold]ファイル:[/bold] {file_name}
 
 [bold]テキスト:[/bold]
 {text_preview}
 
 [bold]メタデータ:[/bold]
-{format_metadata(doc.metadata)}"""
+{format_metadata(doc.metadata, doc.key if hasattr(doc, 'key') else None)}"""
 
         # パネルで表示
         panel = Panel(
@@ -167,6 +190,8 @@ def display_results(results: List[Tuple[Document, float]], query_text: str):
         )
         console.print(panel)
         console.print()
+
+    return keys
 
 
 def create_filter_dict(project: Optional[str], doc_type: Optional[str]) -> Optional[Dict]:
@@ -196,24 +221,26 @@ def main():
     parser.add_argument(
         "--query",
         type=str,
-        default="ヒアリングシート",
+        default="データ分析基盤の案件",
         help="検索クエリテキスト"
     )
     parser.add_argument(
         "--k",
         type=int,
-        default=5,
-        help="取得する結果の数（デフォルト: 5）"
+        default=30,
+        help="取得する結果の数（デフォルト: 30）"
     )
     parser.add_argument(
         "--project",
         type=str,
+        default='LISAテスト1',
         help="プロジェクト名でフィルタ"
     )
     parser.add_argument(
         "--doc-type",
         type=str,
-        choices=["technical_document", "meeting_minutes", "proposal", "RFP", "other"],
+        # default='ヒアリングシート',
+        choices=["technical_document", "meeting_minutes", "proposal", "RFP", "other", "ヒアリングシート"],
         help="ドキュメント種別でフィルタ"
     )
     parser.add_argument(
@@ -285,7 +312,7 @@ def main():
         )
 
         # 結果表示
-        display_results(results, args.query)
+        keys = display_results(results, args.query)
 
         # 統計情報表示
         if args.show_stats and results:
@@ -338,6 +365,13 @@ def main():
                 table.add_row(f"重要度: {imp}", str(count))
 
             console.print(table)
+
+        # キーをカンマ区切りで出力
+        if keys:
+            console.print("\n[bold yellow]削除用キーリスト:[/bold yellow]")
+            console.print(f"[cyan]{','.join(keys)}[/cyan]")
+            console.print("\n[dim]上記のキーリストを --keys オプションで使用できます:[/dim]")
+            console.print(f"[dim]python3 delete_s3_vectors.py --keys {','.join(keys)}[/dim]")
 
     except Exception as e:
         console.print(f"[red]エラーが発生しました: {e}[/red]")

@@ -146,7 +146,7 @@ class HearingSheetGenerator:
         if llm:
             self.llm = llm
         else:
-            model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-exp")
+            model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
             self.llm = ChatGoogleGenerativeAI(
                 model=model_name,
                 google_api_key=api_key,
@@ -262,7 +262,7 @@ JSON形式のみを出力してください（説明や追加テキストは不�
         self,
         reflection_note: str,
         project_name: str = "",
-        k: int = 5,
+        k: int = 30,
         additional_prompt: Optional[str] = None  # Query Translation用
     ) -> List[Tuple[Document, float]]:
         """
@@ -742,7 +742,7 @@ Markdown形式で完全なヒアリングシートを生成してください。
         self,
         reflection_note: str,
         project_context: Optional[Dict[str, str]] = None,
-        search_k: int = 5,
+        search_k: int = 30,
         additional_prompt: Optional[str] = None  # Query Translation用
     ) -> str:
         """

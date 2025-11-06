@@ -357,7 +357,7 @@ def main():
 
         embeddings = GeminiEmbeddings(
             api_key=os.getenv("GEMINI_API_KEY"),
-            model_name=os.getenv("EMBEDDING_MODEL", "models/text-embedding-004")
+            model_name=os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
         )
 
         vector_store = S3VectorStore(
