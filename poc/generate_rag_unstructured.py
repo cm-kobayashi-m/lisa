@@ -1424,10 +1424,19 @@ class OptimizedVectorDBBuilder:
         # テキストを抽出
         texts = [item["chunk"]["text"] for item in batch]
 
-        # バッチでベクトル化（Phase 1: API呼び出し削減）
+        # バッチでベクトル化（並列処理で高速化）
         try:
-            # TODO: embed_batchメソッドが実装されていない場合は個別処理
-            # 現状は個別処理（将来的にバッチ対応予定）
+            # 並列処理でベクトル化（10並列）
+            print(f"    [高速化] 並列処理でベクトル化中（10並列）...")
+            vectors = self.embeddings.embed_documents_parallel(texts, max_workers=10)
+
+            # 進捗更新
+            current_total = self.processed_chunks + batch_size
+            print(f"    [完了] ベクトル化: {batch_size}/{batch_size} (全体: {current_total}/{self.total_chunks})")
+
+        except AttributeError:
+            # embed_documents_parallelメソッドがない場合はフォールバック
+            print(f"    [WARN] 並列処理メソッドが未実装。通常処理にフォールバック")
             vectors = []
             for i, text in enumerate(texts, 1):
                 if i % 10 == 0:
@@ -1452,6 +1461,20 @@ class OptimizedVectorDBBuilder:
         seen_keys = set()  # 重複キーチェック用
 
         for idx, (item, vector) in enumerate(zip(batch, vectors)):
+            # Noneチェックとゼロベクトルチェック
+            if vector is None:
+                print(f"    [WARN] インデックス {idx} のベクトルがNoneです。スキップします")
+                continue
+
+            # ゼロベクトルのチェック
+            import numpy as np
+            if isinstance(vector, list) and len(vector) > 0:
+                vector_array = np.array(vector)
+                vector_norm = np.linalg.norm(vector_array)
+                if vector_norm == 0 or np.isclose(vector_norm, 0):
+                    print(f"    [WARN] インデックス {idx} はゼロベクトルです。スキップします")
+                    continue
+
             if vector and len(vector) == self.embeddings.dimension:
                 chunk_info = item["chunk"]
                 file_name = item["file_name"]

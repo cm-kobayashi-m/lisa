@@ -233,7 +233,7 @@ def main():
     parser.add_argument(
         "--project",
         type=str,
-        default='LISAテスト1',
+        default='LISAテスト1（CSA）',
         help="プロジェクト名でフィルタ"
     )
     parser.add_argument(

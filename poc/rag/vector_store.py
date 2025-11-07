@@ -277,6 +277,16 @@ class S3VectorStore:
                     logger.warning(f"ドキュメント '{doc.key}' にベクトルがありません")
                     continue
 
+                # ゼロベクトルのチェック（cosine距離はゼロノルムをサポートしない）
+                import numpy as np
+                vector_array = np.array(doc.vector)
+                vector_norm = np.linalg.norm(vector_array)
+
+                if vector_norm == 0 or np.isclose(vector_norm, 0):
+                    logger.warning(f"ドキュメント '{doc.key}' はゼロベクトル（すべての要素が0）です。スキップします")
+                    print(f"    [WARN] ゼロベクトル検出: {doc.key} - スキップ")
+                    continue
+
                 # メタデータの準備（S3 Vectorsの10キー制限に対応）
                 import json
 
@@ -360,11 +370,12 @@ class S3VectorStore:
                     added_count += len(vectors)
                     print(f"    [S3 Vectors] バッチ {batch_idx}/{total_batches} 保存完了 ({added_count}/{len(documents)})")
 
-                    # バッチ間にレート制限対策の待機時間を追加
+                    # バッチ間にレート制限対策の待機時間を追加（高速化のため短縮）
                     # 次のバッチがある場合のみ待機
                     if i + batch_size < len(documents):
-                        print(f"    [待機] レート制限回避のため0.5秒待機中...")
-                        time.sleep(0.5)  # 500ms待機
+                        # 0.5秒 → 0.1秒に短縮（リトライ機構があるため安全）
+                        # print(f"    [待機] レート制限回避のため0.1秒待機中...")
+                        time.sleep(0.1)  # 100ms待機（高速化）
 
                 except ClientError as e:
                     logger.error(f"ベクトルの追加に失敗（全リトライ失敗）: {e}")

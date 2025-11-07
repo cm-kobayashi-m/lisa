@@ -20,6 +20,7 @@ from tenacity import (
     retry_if_exception
 )
 from httpx import ConnectError, TimeoutException
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ロギング設定
 logger = logging.getLogger(__name__)
@@ -210,8 +211,8 @@ class GeminiEmbeddings:
                     embedding = self.embed_text(text)
                     batch_embeddings.append(embedding)
 
-                    # レート制限対策として少し待機
-                    time.sleep(0.1)
+                    # レート制限対策として少し待機（並列処理では不要なので削除可能）
+                    # time.sleep(0.1)  # 並列処理実装により削除
 
                 except (GeminiQuotaError, GeminiNetworkError) as e:
                     # リトライ可能なエラーは embed_text() で既にリトライ済み
@@ -229,6 +230,60 @@ class GeminiEmbeddings:
             embeddings.extend(batch_embeddings)
 
         logger.info(f"{len(embeddings)}件のテキストをベクトル化しました")
+        return embeddings
+
+    def embed_documents_parallel(self, texts: List[str], max_workers: int = 5) -> List[List[float]]:
+        """
+        複数のテキストを並列処理でベクトル化（高速化版）
+
+        Args:
+            texts: ベクトル化するテキストのリスト
+            max_workers: 並列処理の数（デフォルト10）
+
+        Returns:
+            ベクトル表現のリスト
+        """
+        if not texts:
+            return []
+
+        embeddings = [None] * len(texts)
+        total = len(texts)
+
+        def embed_single(idx: int, text: str) -> tuple:
+            """単一テキストをベクトル化（インデックス付き）"""
+            try:
+                embedding = self.embed_text(text)
+                return idx, embedding
+            except (GeminiQuotaError, GeminiNetworkError) as e:
+                logger.error(f"インデックス {idx} のベクトル化に失敗（リトライ失敗）: {e}")
+                return idx, None  # ゼロベクトルではなくNoneを返す
+            except Exception as e:
+                logger.error(f"インデックス {idx} のベクトル化に失敗（予期しないエラー）: {e}")
+                return idx, None  # ゼロベクトルではなくNoneを返す
+
+        # ThreadPoolExecutor で並列処理
+        logger.info(f"{total}件のテキストを{max_workers}並列でベクトル化開始")
+        print(f"    [並列処理] {total}件のテキストを{max_workers}並列でベクトル化中...")
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # すべてのタスクを投入
+            futures = {
+                executor.submit(embed_single, i, text): i
+                for i, text in enumerate(texts)
+            }
+
+            completed = 0
+            # 完了したタスクから順次結果を取得
+            for future in as_completed(futures):
+                idx, embedding = future.result()
+                embeddings[idx] = embedding
+                completed += 1
+
+                # 進捗表示（10件ごと）
+                if completed % 10 == 0 or completed == total:
+                    print(f"    [進捗] ベクトル化: {completed}/{total} 完了")
+
+        logger.info(f"{len(embeddings)}件のテキストを並列でベクトル化しました")
         return embeddings
 
     def embed_query(self, text: str) -> List[float]:

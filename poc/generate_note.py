@@ -1156,6 +1156,7 @@ def regenerate_reflection_note(
     # 再生成指示を追加
     enhanced_prompt = f"""【重要】これは2回目の生成です。
 初回生成の内容と、改善された検索結果を統合して、より精度の高いリフレクションノートを作成してください。
+出力には、「はい、わかりました。」「次が出力結果です」など、会話に関する返答は出力せずに、リフレクションノートの出力のみを返してください。
 
 {prompt}"""
 
@@ -1618,14 +1619,6 @@ def save_reflection_note(project_name: str, content: str, summaries_text: str = 
 
     note_file = output_path / f"{dt}_{model_short}_reflection_note.md"
     note_file_latest = output_path / "reflection_note_latest.md"
-
-    # '---' より前を削除し、'---' 自体も含めない
-    marker = '---'
-    if isinstance(content, str):
-        idx = content.find(marker)
-        if idx != -1:
-            # '---' 自体を除外して残す
-            content = content[idx + len(marker):].lstrip('\r\n')
 
     # 日時付きファイルに保存
     with open(note_file, 'w', encoding='utf-8') as f:
