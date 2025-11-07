@@ -12,24 +12,21 @@
 """
 import os
 import sys
-from pathlib import Path
-from typing import Dict, Optional, List, Tuple
 from datetime import datetime
-from langchain_google_genai import ChatGoogleGenerativeAI
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
 from google import genai
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 # 親ディレクトリをパスに追加
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from rag.vector_store import S3VectorStore, Document
 from rag.embeddings import GeminiEmbeddings
+from rag.enhanced_rag_search import EnhancedRAGConfig, create_enhanced_rag_search
+from rag.rag_fusion import apply_hybrid_scoring, rag_fusion_search
 from rag.rag_retriever import RAGRetriever
-from rag.rag_fusion import rag_fusion_search, apply_hybrid_scoring
-
-# CRAG機能のインポート
-from rag.enhanced_rag_search import create_enhanced_rag_search, EnhancedRAGConfig
-
-# 共通モジュールのインポート
+from rag.vector_store import Document, S3VectorStore
 from utils.llm_response import extract_content as _extract_content
 
 

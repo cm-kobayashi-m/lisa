@@ -18,63 +18,58 @@ Phase 1改善:
     python3 generate_rag_unstructured_optimized.py --clear-cache
 """
 
-import os
-import sys
-import io
-import yaml
-import json
 import argparse
 import gc
-import traceback
 import hashlib
-import tempfile
+import io
+import json
+import os
 import pickle
-from typing import List, Dict, Optional, Tuple, Any
-from datetime import datetime
-from dotenv import load_dotenv
+import sys
+import tempfile
+import traceback
+import yaml
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from func_timeout import func_timeout, FunctionTimedOut
-from tqdm import tqdm
+from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-# Google Drive API
+from dotenv import load_dotenv
+from func_timeout import FunctionTimedOut, func_timeout
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+from langchain_core.messages import HumanMessage
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from tqdm import tqdm
+from unstructured.chunking.title import chunk_by_title
+from unstructured.partition.docx import partition_docx
+from unstructured.partition.md import partition_md
+from unstructured.partition.pdf import partition_pdf
+from unstructured.partition.pptx import partition_pptx
+from unstructured.partition.text import partition_text
+from unstructured.partition.xlsx import partition_xlsx
+
+# 環境変数読み込み（インポート前に実行）
+load_dotenv()
+
+from project_config import ProjectConfig
+from rag.document_classifier import DocumentClassifier
+from rag.embeddings import GeminiEmbeddings
+from rag.vector_store import Document, S3VectorStore
+from utils.llm_response import extract_content as _extract_content
 
 # PyMuPDF for PDF text detection
 try:
     import fitz  # PyMuPDF
+
     PYMUPDF_AVAILABLE = True
 except ImportError:
     PYMUPDF_AVAILABLE = False
     print("[WARN] PyMuPDF not installed. PDF text detection disabled.")
-
-# LangChain（画像OCR用）
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage
-
-# Unstructured ライブラリ
-from unstructured.partition.pdf import partition_pdf
-from unstructured.partition.docx import partition_docx
-from unstructured.partition.xlsx import partition_xlsx
-from unstructured.partition.pptx import partition_pptx
-from unstructured.partition.md import partition_md
-from unstructured.partition.text import partition_text
-from unstructured.chunking.title import chunk_by_title
-
-# テキスト分割用
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-# RAGモジュール
-from rag.vector_store import S3VectorStore, Document
-from rag.embeddings import GeminiEmbeddings
-from rag.document_classifier import DocumentClassifier
-
-# プロジェクト設定
-from project_config import ProjectConfig
 
 # 定数
 SCOPES = ["https://www.googleapis.com/auth/drive"]
@@ -83,8 +78,8 @@ CREDENTIALS_FILE = "credentials.json"
 TEMP_DIR = "temp_files"
 MAX_FILE_SIZE = 30  # MB（PDF/Officeファイル用）
 MAX_WORKERS = 10  # Phase 1: ダウンロード並列度を上げる
-EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', "gemini-embedding-001")
-DIMENSION = int(os.getenv('DIMENSION', 1536))
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
+DIMENSION = int(os.getenv("DIMENSION", 1536))
 
 # バッチ処理設定
 EMBEDDING_BATCH_SIZE = 50  # 埋め込みのバッチサイズ
@@ -113,14 +108,8 @@ VECTOR_BUCKET_NAME = os.getenv("VECTOR_BUCKET_NAME", "lisa-poc-vectors")
 VECTOR_INDEX_NAME = os.getenv("VECTOR_INDEX_NAME", "project-documents")
 AWS_REGION = os.getenv("AWS_REGION", "us-west-2")
 
-# 環境変数読み込み
-load_dotenv()
-
-# 共通モジュールのインポート
-from utils.llm_response import extract_content as _extract_content
-
 # ファイル処理のタイムアウト設定（秒）
-PARTITION_TIMEOUT = int(os.getenv("PARTITION_TIMEOUT", 60*10))  # デフォルト10分
+PARTITION_TIMEOUT = int(os.getenv("PARTITION_TIMEOUT", 60 * 10))  # デフォルト10分
 
 
 class FileCache:
