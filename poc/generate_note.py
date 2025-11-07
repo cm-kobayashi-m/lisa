@@ -47,6 +47,16 @@ from rag.enhanced_rag_search import (
 # 共通モジュールのインポート
 from rag.exceptions import GeminiQuotaError, is_quota_error
 from utils.gemini_client import initialize_gemini_client
+from utils.note_helpers import (
+    generate_project_keywords,
+    generate_multiple_queries,
+    generate_project_summary,
+    generate_similar_project_query,
+    normalize_tag as _normalize_tag,
+    filter_tags as _filter_tags,
+    sanitize_project_name as _sanitize_project_name,
+    validate_tags_schema as _validate_tags_schema
+)
 
 
 
