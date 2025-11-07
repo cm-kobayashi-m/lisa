@@ -25,15 +25,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # ロギング設定
 logger = logging.getLogger(__name__)
 
-
-class GeminiQuotaError(Exception):
-    """Gemini APIのクォータ制限エラー"""
-    pass
-
-
-class GeminiNetworkError(Exception):
-    """Gemini APIのネットワーク接続エラー"""
-    pass
+# 共通モジュールのインポート
+from .exceptions import GeminiQuotaError, GeminiNetworkError, is_quota_error, is_network_error
 
 
 class GeminiEmbeddings:
@@ -79,32 +72,9 @@ class GeminiEmbeddings:
             logger.error(f"Geminiクライアントの初期化に失敗: {e}")
             raise
 
-    def _is_quota_error(self, exception: Exception) -> bool:
-        """クォータエラーかどうかを判定"""
-        error_msg = str(exception).lower()
-        return any(keyword in error_msg for keyword in ['429', 'quota', 'rate limit'])
-
-    def _is_network_error(self, exception: Exception) -> bool:
-        """ネットワークエラーかどうかを判定"""
-        # ConnectError, TimeoutException, DNS エラーなどを検出
-        if isinstance(exception, (ConnectError, TimeoutException)):
-            return True
-        error_msg = str(exception).lower()
-        network_keywords = [
-            'nodename nor servname provided',
-            'connection refused',
-            'connection reset',
-            'connection timeout',
-            'name resolution',
-            'dns',
-            'network unreachable',
-            'host unreachable'
-        ]
-        return any(keyword in error_msg for keyword in network_keywords)
-
     def _should_retry(self, exception: Exception) -> bool:
         """リトライすべきエラーかどうかを判定"""
-        return self._is_quota_error(exception) or self._is_network_error(exception)
+        return is_quota_error(exception) or is_network_error(exception)
 
     @retry(
         stop=stop_after_attempt(5),

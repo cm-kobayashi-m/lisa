@@ -11,17 +11,8 @@ from typing import Dict, Any, Optional, Tuple
 from google import genai
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-
-class GeminiQuotaError(Exception):
-    """Geminiのクォータ制限エラー"""
-    pass
-
-
-def _is_quota_error(exception: Exception) -> bool:
-    """例外がクォータエラーかどうかを判定"""
-    error_str = str(exception).lower()
-    quota_keywords = ['quota', 'rate limit', 'resource exhausted', 'too many requests', '429']
-    return any(keyword in error_str for keyword in quota_keywords)
+# 共通モジュールのインポート
+from rag.exceptions import GeminiQuotaError, is_quota_error
 
 
 @retry(
@@ -323,7 +314,7 @@ JSONのみを出力。具体的で詳細な内容を心がけてください。
         return thought_process
 
     except Exception as e:
-        if _is_quota_error(e):
+        if is_quota_error(e):
             raise GeminiQuotaError(str(e))
         else:
             print(f"[ERROR] 思考プロセス分析エラー: {e}")

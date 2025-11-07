@@ -23,30 +23,13 @@ from datetime import datetime
 # 環境変数読み込み
 load_dotenv()
 
+# 共通モジュールのインポート
+from rag.exceptions import GeminiQuotaError, is_quota_error
+from utils.gemini_client import initialize_gemini_client
+
 # 定数
 RAW_HEARING_DIR = Path(__file__).parent.parent / 'ドキュメント' / 'raw_hearing'
 HEARING_DIR = Path(__file__).parent.parent / 'ドキュメント' / 'hearing'
-
-
-class GeminiQuotaError(Exception):
-    """Gemini APIのクォータ制限エラー"""
-    pass
-
-
-def _is_quota_error(exception: Exception) -> bool:
-    """クォータエラーかどうかを判定"""
-    error_msg = str(exception)
-    return '429' in error_msg or 'quota' in error_msg.lower()
-
-
-def initialize_gemini_client() -> genai.Client:
-    """Gemini APIクライアントを初期化"""
-    api_key = os.getenv('GEMINI_API_KEY')
-    if not api_key:
-        print("[ERROR] GEMINI_API_KEY が環境変数に設定されていません。")
-        sys.exit(1)
-
-    return genai.Client(api_key=api_key)
 
 
 def read_raw_hearing_files() -> Dict[str, str]:
@@ -218,13 +201,13 @@ def analyze_individual_hearing(
             }
         )
 
-        if _is_quota_error(Exception(str(response))):
+        if is_quota_error(Exception(str(response))):
             raise GeminiQuotaError("API quota exceeded")
 
         return response.text
 
     except Exception as e:
-        if _is_quota_error(e):
+        if is_quota_error(e):
             print(f"[WARNING] Gemini APIクォータ制限に達しました。リトライします...")
             raise GeminiQuotaError(str(e))
         print(f"[ERROR] {name} のペルソナ分析中にエラーが発生しました: {e}")

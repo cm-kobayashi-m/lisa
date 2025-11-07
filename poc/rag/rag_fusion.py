@@ -20,16 +20,8 @@ from google import genai
 
 from .vector_store import Document
 
-
-class GeminiQuotaError(Exception):
-    """Gemini APIのクォータ制限エラー"""
-    pass
-
-
-def _is_quota_error(exception: Exception) -> bool:
-    """クォータエラーかどうかを判定"""
-    error_msg = str(exception)
-    return '429' in error_msg or 'quota' in error_msg.lower()
+# 共通モジュールのインポート
+from .exceptions import GeminiQuotaError, is_quota_error
 
 
 def reciprocal_rank_fusion(
@@ -271,7 +263,7 @@ def generate_multiple_queries(
             }
         )
 
-        if _is_quota_error(Exception(str(response))):
+        if is_quota_error(Exception(str(response))):
             raise GeminiQuotaError("API quota exceeded")
 
         # レスポンスの検証
@@ -322,7 +314,7 @@ def generate_multiple_queries(
         return queries
 
     except Exception as e:
-        if _is_quota_error(e):
+        if is_quota_error(e):
             print(f"    [WARNING] Gemini APIクォータ制限に達しました。リトライします...")
             raise GeminiQuotaError(str(e))
 

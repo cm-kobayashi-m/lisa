@@ -44,32 +44,9 @@ from rag.enhanced_rag_search import (
     integrate_with_generate_note as crag_integrate_with_generate_note
 )
 
-
-class GeminiQuotaError(Exception):
-    """Gemini APIのクォータ制限エラー"""
-    pass
-
-
-def _is_quota_error(exception: Exception) -> bool:
-    """クォータエラーかどうかを判定（429、503、overloadedエラーを含む）"""
-    error_msg = str(exception)
-    return (
-        '429' in error_msg
-        or '503' in error_msg
-        or 'quota' in error_msg.lower()
-        or 'overloaded' in error_msg.lower()
-        or 'UNAVAILABLE' in error_msg
-    )
-
-
-def initialize_gemini_client() -> genai.Client:
-    """Gemini APIクライアントを初期化"""
-    api_key = os.getenv('GEMINI_API_KEY')
-    if not api_key:
-        print("[ERROR] GEMINI_API_KEY が環境変数に設定されていません。")
-        sys.exit(1)
-
-    return genai.Client(api_key=api_key)
+# 共通モジュールのインポート
+from rag.exceptions import GeminiQuotaError, is_quota_error
+from utils.gemini_client import initialize_gemini_client
 
 
 
@@ -118,7 +95,7 @@ def generate_project_keywords(client: genai.Client, project_name: str) -> str:
         print(f"[INFO] 生成されたキーワード: {keywords}")
         return keywords
     except Exception as e:
-        if _is_quota_error(e):
+        if is_quota_error(e):
             raise GeminiQuotaError(str(e))
         else:
             print(f"[WARN] キーワード生成に失敗しました: {e}")
@@ -217,7 +194,7 @@ def generate_multiple_queries(
         return queries
 
     except Exception as e:
-        if _is_quota_error(e):
+        if is_quota_error(e):
             raise GeminiQuotaError(str(e))
         else:
             print(f"[WARN] 複数クエリ生成に失敗、フォールバック: {e}")
@@ -277,7 +254,7 @@ def generate_project_summary(client: genai.Client, project_name: str, current_re
         print(f"[INFO] 生成されたプロジェクト概要: {summary[:100]}...")
         return summary
     except Exception as e:
-        if _is_quota_error(e):
+        if is_quota_error(e):
             raise GeminiQuotaError(str(e))
         else:
             print(f"[WARN] プロジェクト概要生成に失敗しました: {e}")
@@ -329,7 +306,7 @@ def generate_similar_project_query(client: genai.Client, project_summary: str, p
         print(f"[INFO] 生成された類似プロジェクト検索クエリ: {query}")
         return query
     except Exception as e:
-        if _is_quota_error(e):
+        if is_quota_error(e):
             raise GeminiQuotaError(str(e))
         else:
             print(f"[WARN] 類似プロジェクト検索クエリ生成に失敗しました: {e}")
@@ -890,7 +867,7 @@ def analyze_reflection_note(
             "success_factors": ""
         }
     except Exception as e:
-        if _is_quota_error(e):
+        if is_quota_error(e):
             raise GeminiQuotaError(str(e))
         else:
             print(f"[WARN] ノート分析エラー: {e}")
@@ -975,7 +952,7 @@ def generate_refined_search_queries(
         return refined_current_query, refined_similar_query
 
     except Exception as e:
-        if _is_quota_error(e):
+        if is_quota_error(e):
             raise GeminiQuotaError(str(e))
         else:
             print(f"[WARN] 検索クエリ生成エラー: {e}")
@@ -1172,7 +1149,7 @@ def regenerate_reflection_note(
         return response.text
 
     except Exception as e:
-        if _is_quota_error(e):
+        if is_quota_error(e):
             raise GeminiQuotaError(str(e))
         else:
             print(f"[ERROR] 再生成エラー: {e}")
@@ -1626,7 +1603,7 @@ def generate_final_reflection_note(client: genai.Client, project_name: str, enab
         )
         return response.text, summaries_text
     except Exception as e:
-        if _is_quota_error(e):
+        if is_quota_error(e):
             raise GeminiQuotaError(str(e))
         else:
             print(f"[ERROR] Gemini API呼び出しエラー: {e}")
@@ -1928,7 +1905,7 @@ summary: タグ選定の理由（簡潔に）
             "summary": "YAML解析に失敗しました"
         }
     except Exception as e:
-        if _is_quota_error(e):
+        if is_quota_error(e):
             raise GeminiQuotaError(str(e))
         else:
             print(f"[ERROR] タグ生成エラー: {e}")
