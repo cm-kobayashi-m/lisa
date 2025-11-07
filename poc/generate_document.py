@@ -41,6 +41,14 @@ from rag.enhanced_rag_search import (
         EnhancedRAGConfig
     )
 
+# 思考プロセス分析のインポート（オプション）
+from document_thought_analyzer import (
+    analyze_document_generation_process,
+    save_document_thought_process
+)
+from google import genai
+
+
 
 def load_source_document(input_path: str) -> str:
     """
@@ -146,12 +154,15 @@ def generate_hearing_sheet(args, vector_store, embeddings, enable_crag=False):
 
     # ヒアリングシート生成（追加プロンプトを渡す）
     print("\n[4/4] ヒアリングシートを生成中...")
-    return generator.generate(
+    document = generator.generate(
         reflection_note=args.source_document,
         project_context=project_context if project_context else None,
         search_k=args.search_k,
         additional_prompt=getattr(args, 'additional_prompt', None)  # 追加プロンプトを渡す
     )
+
+    # 生成結果とコンテキストを返す（思考プロセス分析用）
+    return document, project_context, getattr(generator, '_last_rag_results', None)
 
 
 def generate_proposal(args, vector_store, embeddings, enable_crag=False):
@@ -186,12 +197,15 @@ def generate_proposal(args, vector_store, embeddings, enable_crag=False):
 
     # 提案書生成（追加プロンプトを渡す）
     print("\n[4/4] 提案書を生成中...")
-    return generator.generate(
+    document = generator.generate(
         source_document=args.source_document,
         project_context=project_context if project_context else None,
         search_k=args.search_k,
         additional_prompt=getattr(args, 'additional_prompt', None)  # 追加プロンプトを渡す
     )
+
+    # 生成結果とコンテキストを返す（思考プロセス分析用）
+    return document, project_context, getattr(generator, '_last_rag_results', None)
 
 
 def main():
@@ -298,6 +312,18 @@ def main():
             help='カスタムテンプレートファイルパス'
         )
 
+        # 思考プロセス分析オプション
+        subparser.add_argument(
+            '--enable-thought-analysis',
+            action='store_true',
+            help='思考プロセス分析を有効にする'
+        )
+        subparser.add_argument(
+            '--disable-thought-analysis',
+            action='store_true',
+            help='思考プロセス分析を無効にする'
+        )
+
     # ヒアリングシート固有のオプション
     hearing_parser.add_argument(
         '--industry',
@@ -326,6 +352,20 @@ def main():
     else:
         # 環境変数から取得
         enable_crag = os.getenv('ENABLE_CRAG', 'false').lower() == 'true'
+
+    # 思考プロセス分析の有効/無効の決定
+    if hasattr(args, 'enable_thought_analysis') and args.enable_thought_analysis:
+        enable_thought_analysis = True
+    elif hasattr(args, 'disable_thought_analysis') and args.disable_thought_analysis:
+        enable_thought_analysis = False
+    else:
+        # リフレクションノートと同じ環境変数を使用
+        enable_thought_analysis = os.getenv('ENABLE_THOUGHT_ANALYSIS', 'true').lower() == 'true'
+
+    if enable_thought_analysis:
+        print("[INFO] 思考プロセス分析: 有効")
+    else:
+        print("[INFO] 思考プロセス分析: 無効")
 
     # 環境変数チェック
     if not os.getenv("GEMINI_API_KEY"):
@@ -370,10 +410,13 @@ def main():
         )
 
         # 3-4. ドキュメント生成（サブコマンドに応じて分岐）
+        project_context = None
+        rag_results = None
+
         if args.document_type in ['hearing-sheet', 'hs']:
-            document = generate_hearing_sheet(args, vector_store, embeddings, enable_crag)
+            document, project_context, rag_results = generate_hearing_sheet(args, vector_store, embeddings, enable_crag)
         elif args.document_type in ['proposal', 'prop']:
-            document = generate_proposal(args, vector_store, embeddings, enable_crag)
+            document, project_context, rag_results = generate_proposal(args, vector_store, embeddings, enable_crag)
         else:
             print(f"[ERROR] 未知のドキュメントタイプ: {args.document_type}", file=sys.stderr)
             sys.exit(1)
@@ -383,6 +426,40 @@ def main():
 
         # 6. 結果を保存
         save_document(document, str(output_path), latest_name)
+
+        # 7. 思考プロセス分析（有効な場合）
+        if enable_thought_analysis:
+            print("\n[5/5] 思考プロセスを分析中...")
+            try:
+                # Gemini クライアントを初期化
+                api_key = os.getenv("GEMINI_API_KEY")
+                client = genai.Client(api_key=api_key)
+
+                # 思考プロセスを分析
+                thought_process = analyze_document_generation_process(
+                    client=client,
+                    document_type=args.document_type,
+                    source_document=args.source_document,
+                    generated_document=document,
+                    rag_results=rag_results,
+                    project_context=project_context,
+                    additional_prompt=getattr(args, 'additional_prompt', None)
+                )
+
+                # 分析結果を保存
+                output_dir = Path(output_path).parent
+                thought_file, latest_file = save_document_thought_process(
+                    document_type=args.document_type,
+                    output_dir=output_dir,
+                    thought_process=thought_process,
+                    document_file_path=str(output_path)
+                )
+                print(f"[INFO] 思考プロセス分析完了: {thought_file}")
+
+            except Exception as e:
+                print(f"[WARN] 思考プロセス分析でエラーが発生しましたが、ドキュメント生成は成功しました: {e}")
+                import traceback
+                traceback.print_exc()
 
         print("\n[SUCCESS] ドキュメント生成が完了しました！")
 

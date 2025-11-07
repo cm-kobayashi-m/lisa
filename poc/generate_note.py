@@ -1279,6 +1279,34 @@ def generate_final_reflection_note_v2(
             analysis_result
         )
 
+        # 5. 思考プロセス分析（環境変数で有効化されている場合）
+        enable_thought_analysis = os.getenv('ENABLE_THOUGHT_ANALYSIS', 'true').lower() == 'true'
+        if enable_thought_analysis:
+            print(f"\n[INFO] ステップ5: 思考プロセスを分析中...")
+            try:
+                from thought_process_analyzer import analyze_thought_process, save_thought_process
+
+                # 思考プロセスを分析
+                thought_process = analyze_thought_process(
+                    client,
+                    project_name,
+                    final_note,
+                    refined_rag_context
+                )
+
+                # 分析結果を保存
+                thought_file, latest_file = save_thought_process(
+                    project_name,
+                    thought_process,
+                    output_dir=OUTPUT_DIR
+                )
+                print(f"[INFO] 思考プロセス分析完了: {thought_file}")
+
+            except Exception as e:
+                print(f"[WARN] 思考プロセス分析でエラーが発生しましたが、ノート生成は継続します: {e}")
+                import traceback
+                traceback.print_exc()
+
         print(f"[INFO] === Phase 2 完了: 精度向上されたノートを生成 ===")
         return final_note, refined_rag_context
 
