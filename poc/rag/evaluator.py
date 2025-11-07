@@ -58,7 +58,7 @@ class RelevanceEvaluator:
         self.client = client or self._initialize_client()
         self.upper_threshold = upper_threshold
         self.lower_threshold = lower_threshold
-        self.model_name = model_name or os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+        self.model_name = model_name or os.getenv('GEMINI_MODEL', 'gemini-2.5-pro ')
 
     def _initialize_client(self) -> genai.Client:
         """Gemini APIクライアントを初期化"""

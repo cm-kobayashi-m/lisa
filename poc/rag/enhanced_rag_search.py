@@ -467,7 +467,7 @@ def integrate_with_generate_note(
 
 {prompt}"""
 
-    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro ')
 
     try:
         response = gemini_client.models.generate_content(

@@ -52,7 +52,7 @@ def analyze_thought_process(
 
     if model_name is None:
         # 思考プロセス分析用のモデル（安価なモデルを使用可能）
-        model_name = os.getenv('THOUGHT_ANALYSIS_MODEL', os.getenv('GEMINI_MODEL', 'gemini-2.5-flash'))
+        model_name = os.getenv('THOUGHT_ANALYSIS_MODEL', os.getenv('GEMINI_MODEL', 'gemini-2.5-pro '))
 
     # コンテキストの要約（トークン削減のため）
     context_summary = ""

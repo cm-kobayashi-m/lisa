@@ -104,7 +104,7 @@ def generate_project_keywords(client: genai.Client, project_name: str) -> str:
 出力形式: スペース区切りのキーワード（説明不要、日本語可）
 例: EC データ分析 売上予測 機械学習 AWS"""
 
-    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro ')
 
     try:
         response = client.models.generate_content(
@@ -178,7 +178,7 @@ def generate_multiple_queries(
 
 説明文は不要、各行1つのクエリのみを出力してください。"""
 
-    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro ')
 
     try:
         response = client.models.generate_content(
@@ -265,7 +265,7 @@ def generate_project_summary(client: genai.Client, project_name: str, current_re
 
 出力形式: 簡潔な文章で要約（箇条書き不要）"""
 
-    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro ')
 
     try:
         response = client.models.generate_content(
@@ -315,7 +315,7 @@ def generate_similar_project_query(client: genai.Client, project_summary: str, p
 
 出力形式: 検索に適した短いキーワードフレーズ（50文字以内、スペース区切り）"""
 
-    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro ')
 
     try:
         response = client.models.generate_content(
@@ -848,7 +848,7 @@ def analyze_reflection_note(
     "success_factors": "成功要因（50文字以内）"
 }}"""
 
-    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro ')
 
     try:
         response = client.models.generate_content(
@@ -956,7 +956,7 @@ def generate_refined_search_queries(
 【出力形式】
 検索クエリのみを出力（説明不要）"""
 
-    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro ')
 
     try:
         response = client.models.generate_content(
@@ -1160,7 +1160,7 @@ def regenerate_reflection_note(
 
 {prompt}"""
 
-    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro ')
 
     try:
         response = client.models.generate_content(
@@ -1616,7 +1616,7 @@ def generate_final_reflection_note(client: genai.Client, project_name: str, enab
         summaries_text=summaries_text
     )
 
-    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro ')
 
     try:
         response = client.models.generate_content(
@@ -1641,7 +1641,7 @@ def save_reflection_note(project_name: str, content: str, summaries_text: str = 
     dt = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 
     # 使用しているモデル名を取得（環境変数から）
-    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro ')
     # モデル名を簡潔にする
     model_short = model_name.replace('.', '-')
 
@@ -1878,7 +1878,7 @@ confidence: high
 summary: タグ選定の理由（簡潔に）
 """
 
-    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro ')
 
     try:
         response = client.models.generate_content(
@@ -1956,7 +1956,7 @@ def save_tags(project_name: str, tags_data: Dict):
     dt = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 
     # モデル名
-    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+    model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro ')
     model_short = model_name.replace('.', '-')
 
     # タグデータに追加情報を付与

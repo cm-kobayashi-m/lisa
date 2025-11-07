@@ -58,7 +58,7 @@ def analyze_document_generation_process(
 
     if model_name is None:
         # リフレクションノートと同じ環境変数を使用
-        model_name = os.getenv('THOUGHT_ANALYSIS_MODEL', os.getenv('GEMINI_MODEL', 'gemini-2.5-flash'))
+        model_name = os.getenv('THOUGHT_ANALYSIS_MODEL', os.getenv('GEMINI_MODEL', 'gemini-2.5-pro '))
 
     # ドキュメント種別の日本語名
     doc_type_ja = {

@@ -654,7 +654,7 @@ class OptimizedChunker:
                 return []
 
             # LangChainのGeminiモデル初期化
-            model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-pro ")
             llm = ChatGoogleGenerativeAI(
                 model=model_name,
                 google_api_key=api_key,
