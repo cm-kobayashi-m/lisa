@@ -8,15 +8,15 @@ LLM（Gemini）を使用してドキュメントの種別を自動判定しま�
 import os
 import sys
 from pathlib import Path
-from typing import Optional, Dict, Tuple
-from langchain_google_genai import ChatGoogleGenerativeAI
+from typing import Dict, Optional, Tuple
+
 from langchain_core.messages import HumanMessage
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 # 親ディレクトリをパスに追加（project_configをインポートするため）
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from project_config import ProjectConfig
 
-# 共通モジュールのインポート
+from project_config import ProjectConfig
 from utils.llm_response import extract_content as _extract_content
 
 
