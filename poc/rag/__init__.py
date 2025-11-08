@@ -24,9 +24,9 @@ from .embeddings import GeminiEmbeddings
 from .rag_retriever import RAGRetriever
 from .enhanced_rag_search import create_enhanced_rag_search, EnhancedRAGConfig
 from .rag_fusion import rag_fusion_search, reciprocal_rank_fusion, apply_hybrid_scoring
-from .corrective_rag import CorrectiveRAG, RelevanceLevel
+from .corrective_rag import InternalCRAG, create_internal_crag
 from .knowledge_refiner import KnowledgeRefiner
-from .evaluator import Evaluator
+from .evaluator import RelevanceEvaluator, RelevanceLevel, EvaluationResult, DocumentTypeAwareEvaluator, create_evaluator
 from .document_classifier import DocumentClassifier
 
 # 例外クラス
@@ -47,10 +47,14 @@ __all__ = [
     "apply_hybrid_scoring",
 
     # CRAG & Knowledge Refinement
-    "CorrectiveRAG",
+    "InternalCRAG",
+    "create_internal_crag",
     "RelevanceLevel",
+    "RelevanceEvaluator",
+    "EvaluationResult",
+    "DocumentTypeAwareEvaluator",
+    "create_evaluator",
     "KnowledgeRefiner",
-    "Evaluator",
 
     # ユーティリティ
     "DocumentClassifier",

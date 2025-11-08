@@ -20,7 +20,6 @@ Phase 1改善:
 
 import os
 import sys
-import io
 import yaml
 import json
 import argparse
@@ -28,14 +27,15 @@ import gc
 import traceback
 import hashlib
 import tempfile
-import pickle
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Any
 from datetime import datetime
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from func_timeout import func_timeout, FunctionTimedOut
 from tqdm import tqdm
 from pathlib import Path
+
+import fitz  # PyMuPDF
 
 # Google Drive API
 from google.auth.transport.requests import Request
@@ -44,13 +44,6 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-# PyMuPDF for PDF text detection
-try:
-    import fitz  # PyMuPDF
-    PYMUPDF_AVAILABLE = True
-except ImportError:
-    PYMUPDF_AVAILABLE = False
-    print("[WARN] PyMuPDF not installed. PDF text detection disabled.")
 
 # LangChain（画像OCR用）
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -178,7 +171,7 @@ class FileCache:
         """キャッシュをクリア"""
         self.cache = {}
         self._save_cache()
-        print(f"[INFO] キャッシュをクリアしました")
+        print("[INFO] キャッシュをクリアしました")
 
 
 def authenticate():
@@ -325,8 +318,6 @@ class OptimizedChunker:
 
     def check_pdf_has_text(self, file_path: str) -> bool:
         """PDFにテキストが含まれているか事前チェック（Phase 1改善）"""
-        if not PYMUPDF_AVAILABLE:
-            return False  # PyMuPDFがなければfalse（hi_res回避）
 
         try:
             doc = fitz.open(file_path)
@@ -360,9 +351,9 @@ class OptimizedChunker:
         # ファイル名プレフィックスをログに追加
         log_prefix = f"[{file_name}]"
 
-        print(f"\n  ========================================")
+        print("\n  ========================================")
         print(f"  {log_prefix} 処理中")
-        print(f"  ========================================")
+        print("  ========================================")
 
         # キャッシュチェック（Phase 1改善）
         if self.file_cache.is_processed(file_id, modified_time):
@@ -1361,7 +1352,7 @@ class OptimizedVectorDBBuilder:
         # バッチでベクトル化（並列処理で高速化）
         try:
             # 並列処理でベクトル化（10並列）
-            print(f"    [高速化] 並列処理でベクトル化中（10並列）...")
+            print("    [高速化] 並列処理でベクトル化中（10並列）...")
             vectors = self.embeddings.embed_documents_parallel(texts, max_workers=10)
 
             # 進捗更新
@@ -1370,7 +1361,7 @@ class OptimizedVectorDBBuilder:
 
         except AttributeError:
             # embed_documents_parallelメソッドがない場合はフォールバック
-            print(f"    [WARN] 並列処理メソッドが未実装。通常処理にフォールバック")
+            print("    [WARN] 並列処理メソッドが未実装。通常処理にフォールバック")
             vectors = []
             for i, text in enumerate(texts, 1):
                 if i % 10 == 0:
@@ -1523,7 +1514,7 @@ class OptimizedVectorDBBuilder:
 
         # 最終統計を表示
         if self.total_chunks > 0:
-            print(f"\n    [完了] 全チャンク処理完了:")
+            print("\n    [完了] 全チャンク処理完了:")
             print(f"      - 総チャンク数: {self.total_chunks}")
             print(f"      - 処理済み: {self.processed_chunks}")
             print(f"      - S3保存済み: {self.saved_chunks}")
@@ -1757,7 +1748,7 @@ def main():
             print(f"\n[INFO] 全タスク完了: {len(files)}ファイル処理完了")
 
         # 残りのバッファを処理
-        print(f"\n[INFO] 残りのバッファを処理中...")
+        print("\n[INFO] 残りのバッファを処理中...")
         flushed = vector_db.flush_buffers()
         total_docs += flushed
 

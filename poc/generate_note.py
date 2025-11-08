@@ -499,7 +499,7 @@ def adjust_k_based_on_results(
     k_current: int,
     k_similar: int,
     current_results_count: int,
-    max_total: int = 13
+    max_total: int = 60
 ) -> tuple[int, int]:
     """
     第1段階の結果に基づいて第2段階のk値を調整
@@ -513,11 +513,18 @@ def adjust_k_based_on_results(
     Returns:
         調整後の (k_current, k_similar)
     """
+    original_k_similar = k_similar
+
     # 現在のプロジェクトで十分な結果が得られなかった場合
     if current_results_count < k_current:
         deficit = k_current - current_results_count
         # 不足分を類似プロジェクトに再配分
         k_similar = min(k_similar + deficit, max_total - current_results_count)
+
+    # デバッグ情報
+    if k_similar != original_k_similar or current_results_count < k_current:
+        print(f"[DEBUG] k値調整: k_similar {original_k_similar} → {k_similar} "
+              f"(現在={current_results_count}/{k_current}, max_total={max_total})")
 
     return k_current, k_similar
 
@@ -734,18 +741,27 @@ def deduplicate_results(
 
     # 類似プロジェクトから重複を除外
     similar_deduped = []
+    duplicates_by_key = 0
+    duplicates_by_fingerprint = 0
+
     for doc, distance in similar_results:
         # キーで重複チェック
         if doc.key in current_keys:
+            duplicates_by_key += 1
             continue
 
         # フィンガープリントで重複チェック
         text_snippet = doc.text[:200] if len(doc.text) > 200 else doc.text
         fingerprint = hashlib.md5(text_snippet.encode('utf-8')).hexdigest()
         if fingerprint in current_fingerprints:
+            duplicates_by_fingerprint += 1
             continue
 
         similar_deduped.append((doc, distance))
+
+    # デバッグ情報を出力
+    if duplicates_by_key > 0 or duplicates_by_fingerprint > 0:
+        print(f"[DEBUG] 重複排除: キー一致={duplicates_by_key}件, フィンガープリント一致={duplicates_by_fingerprint}件")
 
     return current_results, similar_deduped
 
@@ -1027,7 +1043,7 @@ def perform_refined_rag_search(
 
     # k値調整
     k_current_actual, k_similar = adjust_k_based_on_results(
-        k_current, k_similar, len(current_results)
+        k_current, k_similar, len(current_results), max_total=max_total
     )
 
     # 類似プロジェクトを検索
@@ -1047,6 +1063,7 @@ def perform_refined_rag_search(
         print(f"[INFO] 類似プロジェクトから{len(similar_results)}件取得（再検索）")
 
     # 重複排除
+    print(f"[INFO] 重複排除前: 現在={len(current_results)}, 類似={len(similar_results)}")
     current_results, similar_results = deduplicate_results(
         current_results,
         similar_results
@@ -1509,7 +1526,7 @@ def generate_final_reflection_note(client: genai.Client, project_name: str, enab
 
             # 結果に基づいてk_similarを調整
             k_current_actual, k_similar = adjust_k_based_on_results(
-                k_current, k_similar, len(current_project_results)
+                k_current, k_similar, len(current_project_results), max_total=max_total
             )
 
             # ===== PHASE 3: プロジェクト概要を生成 =====
@@ -1551,6 +1568,7 @@ def generate_final_reflection_note(client: genai.Client, project_name: str, enab
                 print(f"[INFO] 第2段階: 類似プロジェクトから{len(similar_project_results)}件取得（フィルタ後）")
 
         # 重複排除（RAG-Fusionモード、従来モード共通）
+        print(f"[INFO] 重複排除前: 現在={len(current_project_results)}, 類似={len(similar_project_results)}")
         current_project_results, similar_project_results = deduplicate_results(
             current_project_results,
             similar_project_results
