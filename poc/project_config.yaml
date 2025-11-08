@@ -61,9 +61,9 @@ projects:
     google_drive:
       - "1DG2XiwTn-v0SOZbzbi2YrU1KAxVPipph"
 
-  LISA_DUMMY:
-    google_drive:
-      - "1cWaCwGFTyevC7Y_TS2qi-aLkwJR2u6Dd"
+#  LISA_DUMMY:
+#    google_drive:
+#      - "1cWaCwGFTyevC7Y_TS2qi-aLkwJR2u6Dd"
 
 #  ユニ・チャーム（CSA）:
 #    google_drive:
