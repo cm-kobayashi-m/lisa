@@ -53,17 +53,17 @@ projects:
 #      - "1Dg7Ra5osBM5gvaCvKUudaXf4uiZUVQug"
 #      - "1kL3FqFUvJbldTCkHmv9PkQFfQ7eZ0bNU"
 
-#  LISAテスト1:
-#    google_drive:
-#      - "1cxP8tNPWHcXWFug0yZ7Iu5BgFID7hpW6"
+  LISAテスト1:
+    google_drive:
+      - "1cxP8tNPWHcXWFug0yZ7Iu5BgFID7hpW6"
 
   LISAテスト1（CSA）:
     google_drive:
       - "1DG2XiwTn-v0SOZbzbi2YrU1KAxVPipph"
 
-#  LISA_DUMMY:
-#    google_drive:
-#      - "1cWaCwGFTyevC7Y_TS2qi-aLkwJR2u6Dd"
+  LISA_DUMMY:
+    google_drive:
+      - "1cWaCwGFTyevC7Y_TS2qi-aLkwJR2u6Dd"
 
 #  ユニ・チャーム（CSA）:
 #    google_drive:
