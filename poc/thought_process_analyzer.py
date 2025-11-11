@@ -351,12 +351,91 @@ JSONのみを出力。具体的で詳細な内容を心がけてください。
             }
 
 
+def _build_yaml_frontmatter(thought_process: Dict[str, Any], json_file_path: Optional[str] = None) -> str:
+    """
+    YAMLフロントマターを生成
+
+    Args:
+        thought_process: 思考プロセスの分析結果
+        json_file_path: 対応するJSONファイルパス
+
+    Returns:
+        YAMLフロントマター文字列
+    """
+    import json as json_lib
+
+    frontmatter = ["---"]
+
+    # 基本メタデータ
+    frontmatter.append(f"project_name: {json_lib.dumps(thought_process.get('project_name', 'unknown'))}")
+    frontmatter.append(f"generated_at: {json_lib.dumps(thought_process.get('generated_at', 'N/A'))}")
+    frontmatter.append(f"model: {json_lib.dumps(thought_process.get('model', 'N/A'))}")
+
+    # ノートファイルパス
+    if 'note_file' in thought_process:
+        frontmatter.append(f"note_file: {json_lib.dumps(thought_process['note_file'])}")
+
+    # JSONファイルパス
+    if json_file_path:
+        frontmatter.append(f"json_file: {json_lib.dumps(str(json_file_path))}")
+
+    # エラー情報（存在する場合）
+    if 'error' in thought_process:
+        frontmatter.append(f"has_error: true")
+
+    frontmatter.append("---")
+    frontmatter.append("")  # 空行
+
+    return '\n'.join(frontmatter)
+
+
+def _enhance_markdown_with_metadata(
+    markdown_content: str,
+    thought_process: Dict[str, Any],
+    json_file_path: Optional[str] = None
+) -> str:
+    """
+    Markdown本文にメタデータ（YAMLフロントマター、目次）を追加
+
+    Args:
+        markdown_content: format_thought_process_summary()の出力
+        thought_process: 思考プロセスの分析結果
+        json_file_path: 対応するJSONファイルパス
+
+    Returns:
+        メタデータ付きMarkdown文字列
+    """
+    # YAMLフロントマターを追加
+    frontmatter = _build_yaml_frontmatter(thought_process, json_file_path)
+
+    # 簡易的な目次を追加
+    toc_lines = [
+        "## 目次",
+        "",
+        "- [思考の流れと根拠](#思考の流れと根拠)",
+        "- [重要な意思決定](#重要な意思決定)",
+        "- [情報源の活用](#情報源の活用)",
+        "- [セクション構成](#セクション構成)",
+        "- [分析の深さ](#分析の深さ)",
+        "- [品質評価](#品質評価)",
+        "- [改善の余地](#改善の余地)",
+        ""
+    ]
+    toc = '\n'.join(toc_lines)
+
+    # 組み立て
+    enhanced = frontmatter + '\n' + toc + '\n' + markdown_content
+
+    return enhanced
+
+
 def save_thought_process(
     project_name: str,
     thought_process: Dict[str, Any],
     note_file_path: Optional[str] = None,
-    output_dir: str = "outputs"
-) -> Tuple[Path, Path]:
+    output_dir: str = "outputs",
+    save_markdown: bool = True
+) -> Tuple[Path, Path, Optional[Path], Optional[Path]]:
     """
     思考プロセスを保存
 
@@ -365,9 +444,12 @@ def save_thought_process(
         thought_process: 思考プロセスの分析結果
         note_file_path: 対応するノートファイルのパス
         output_dir: 出力ディレクトリ
+        save_markdown: Markdown形式でも保存するか（デフォルト: True）
 
     Returns:
-        (タイムスタンプ付きファイルパス, latestファイルパス)
+        (JSONタイムスタンプファイル, JSONラテストファイル,
+         MDタイムスタンプファイル, MDラテストファイル)
+        Markdown保存が無効の場合、後者2つはNone
     """
 
     # 保存先ディレクトリ作成
@@ -382,18 +464,52 @@ def save_thought_process(
         thought_process['note_file'] = str(note_file_path)
 
     # タイムスタンプ付きファイルに保存
-    timestamped_file = analysis_dir / f"{timestamp}_thought_process.json"
+    timestamped_file = analysis_dir / f"{timestamp}_note_thought_process.json"
     with open(timestamped_file, 'w', encoding='utf-8') as f:
         json.dump(thought_process, f, ensure_ascii=False, indent=2)
     print(f"[INFO] 思考プロセスを保存: {timestamped_file}")
 
     # latestファイルにも保存
-    latest_file = analysis_dir / "thought_process_latest.json"
+    latest_file = analysis_dir / "note_thought_process_latest.json"
     with open(latest_file, 'w', encoding='utf-8') as f:
         json.dump(thought_process, f, ensure_ascii=False, indent=2)
     print(f"[INFO] 最新の思考プロセスを保存: {latest_file}")
 
-    return timestamped_file, latest_file
+    # Markdown形式でも保存
+    md_timestamped_file = None
+    md_latest_file = None
+
+    if save_markdown:
+        try:
+            # format_thought_process_summary()を使ってMarkdown本文を生成
+            markdown_body = format_thought_process_summary(thought_process)
+
+            # メタデータを追加（YAMLフロントマター、目次）
+            # プロジェクト名を基準とした相対パスを計算
+            json_relative_path = f"{project_name}/analysis/{timestamped_file.name}"
+            enhanced_markdown = _enhance_markdown_with_metadata(
+                markdown_body,
+                thought_process,
+                json_file_path=json_relative_path
+            )
+
+            # タイムスタンプ付きMarkdownファイルに保存
+            md_timestamped_file = analysis_dir / f"{timestamp}_note_thought_process.md"
+            with open(md_timestamped_file, 'w', encoding='utf-8') as f:
+                f.write(enhanced_markdown)
+            print(f"[INFO] 思考プロセス（Markdown）を保存: {md_timestamped_file}")
+
+            # latestファイルにも保存
+            md_latest_file = analysis_dir / "note_thought_process_latest.md"
+            with open(md_latest_file, 'w', encoding='utf-8') as f:
+                f.write(enhanced_markdown)
+            print(f"[INFO] 最新の思考プロセス（Markdown）を保存: {md_latest_file}")
+
+        except Exception as e:
+            print(f"[ERROR] Markdown保存エラー: {e}")
+            # Markdownの保存に失敗してもJSONは保存されているので処理は継続
+
+    return timestamped_file, latest_file, md_timestamped_file, md_latest_file
 
 
 def load_thought_process(file_path: Path) -> Dict[str, Any]:
