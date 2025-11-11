@@ -448,13 +448,16 @@ def main():
 
                 # 分析結果を保存
                 output_dir = Path(output_path).parent
-                thought_file, latest_file = save_document_thought_process(
+                thought_file, latest_file, md_thought_file, md_latest_file = save_document_thought_process(
                     document_type=args.document_type,
                     output_dir=output_dir,
                     thought_process=thought_process,
-                    document_file_path=str(output_path)
+                    document_file_path=str(output_path),
+                    save_markdown=True  # Markdown形式でも保存
                 )
                 print(f"[INFO] 思考プロセス分析完了: {thought_file}")
+                if md_thought_file:
+                    print(f"[INFO] Markdown形式でも保存: {md_thought_file}")
 
             except Exception as e:
                 print(f"[WARN] 思考プロセス分析でエラーが発生しましたが、ドキュメント生成は成功しました: {e}")

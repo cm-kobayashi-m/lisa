@@ -13,6 +13,7 @@
 import os
 import sys
 from pathlib import Path
+from utils.llm_utils import extract_content
 from typing import Dict, Optional, List, Tuple
 from datetime import datetime
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -28,75 +29,6 @@ from rag.rag_fusion import rag_fusion_search, apply_hybrid_scoring
 
 # CRAG機能のインポート
 from rag.enhanced_rag_search import create_enhanced_rag_search, EnhancedRAGConfig
-
-
-def _extract_content(response) -> str:
-    """
-    LLMレスポンスからコンテンツを抽出
-
-    Gemini 2.0などでcontentがリスト形式で返される場合に対応
-
-    Args:
-        response: LLMからのレスポンス
-
-    Returns:
-        抽出されたテキストコンテンツ
-    """
-    if response is None:
-        return ""
-
-    # 公式SDK系: response.text がある場合は最短経路
-    text = getattr(response, "text", None)
-    if isinstance(text, str) and text.strip():
-        return text.strip()
-
-    # contentが無ければ response 自体を中身とみなす
-    content = getattr(response, "content", response)
-    if content is None:
-        return ""
-
-    # 文字列
-    if isinstance(content, str):
-        return content.strip()
-
-    # バイト列
-    if isinstance(content, (bytes, bytearray)):
-        try:
-            return content.decode("utf-8", errors="ignore").strip()
-        except Exception:
-            return ""
-
-    # dict（Gemini系: {'parts': [...]} / {'text': '...'} など）
-    if isinstance(content, dict):
-        if "text" in content and isinstance(content["text"], str):
-            return content["text"].strip()
-        parts = content.get("parts")
-        if isinstance(parts, list):
-            content = parts  # 下のlist処理へ
-        else:
-            return str(content).strip()
-
-    # list（LangChainのAIMessage.contentがリスト化されるケース等）
-    if isinstance(content, list):
-        texts = []
-        for part in content:
-            if part is None:
-                continue
-            if isinstance(part, str):
-                t = part
-            elif isinstance(part, dict):
-                t = part.get("text")
-            else:
-                t = getattr(part, "text", None)
-            if isinstance(t, str) and t:
-                texts.append(t)
-        return "".join(texts).strip()
-
-    # フォールバック
-    try:
-        return str(content).strip()
-    except Exception:
-        return ""
 
 
 class HearingSheetGenerator:
@@ -237,7 +169,7 @@ JSON形式のみを出力してください（説明や追加テキストは不�
             response = self.llm.invoke(extraction_prompt)
             import json
             # レスポンスからJSONを抽出（```json ``` の除去）
-            content = _extract_content(response)
+            content = extract_content(response)
             if content.startswith("```"):
                 # コードブロックを除去
                 lines = content.split("\n")
@@ -532,7 +464,7 @@ JSON形式のみを出力してください（説明や追加テキストは不�
 """
         try:
             response = self.llm.invoke(risk_prompt)
-            return _extract_content(response)
+            return extract_content(response)
         except Exception as e:
             print(f"    [WARN] リスク評価エラー: {e}")
             return "（リスク評価を実行できませんでした）"
@@ -578,7 +510,7 @@ JSON形式のみを出力してください（説明や追加テキストは不�
 """
         try:
             response = self.llm.invoke(question_prompt)
-            return _extract_content(response)
+            return extract_content(response)
         except Exception as e:
             print(f"    [WARN] 追加質問生成エラー: {e}")
             return "（追加質問を生成できませんでした）"
@@ -695,7 +627,7 @@ Markdown形式で完全なヒアリングシートを生成してください。
 
         try:
             response = self.llm.invoke(generation_prompt)
-            hearing_sheet = _extract_content(response)
+            hearing_sheet = extract_content(response)
 
             # メタデータを追加
             current_date = datetime.now().strftime("%Y年%m月%d日")

@@ -1295,12 +1295,15 @@ def generate_final_reflection_note_v2(
                 )
 
                 # 分析結果を保存
-                thought_file, latest_file = save_thought_process(
+                thought_file, latest_file, md_thought_file, md_latest_file = save_thought_process(
                     project_name,
                     thought_process,
-                    output_dir=OUTPUT_DIR
+                    output_dir=OUTPUT_DIR,
+                    save_markdown=True  # Markdown形式でも保存
                 )
                 print(f"[INFO] 思考プロセス分析完了: {thought_file}")
+                if md_thought_file:
+                    print(f"[INFO] Markdown形式でも保存: {md_thought_file}")
 
             except Exception as e:
                 print(f"[WARN] 思考プロセス分析でエラーが発生しましたが、ノート生成は継続します: {e}")
