@@ -16,6 +16,13 @@ from dotenv import load_dotenv
 from google import genai
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+# 共通ユーティリティ
+from utils.gemini_utils import (
+    GeminiQuotaError,
+    is_quota_error,
+    initialize_gemini_client
+)
+
 # 環境変数読み込み
 load_dotenv()
 
@@ -24,27 +31,6 @@ HEARING_DIR = Path(__file__).parent.parent / 'ドキュメント' / 'hearing'
 OUTPUT_DIR = Path(__file__).parent / 'outputs'
 
 COMPANY = "クラスメソッド社"
-
-
-class GeminiQuotaError(Exception):
-    """Gemini APIのクォータ制限エラー"""
-    pass
-
-
-def _is_quota_error(exception: Exception) -> bool:
-    """クォータエラーかどうかを判定"""
-    error_msg = str(exception)
-    return '429' in error_msg or 'quota' in error_msg.lower()
-
-
-def initialize_gemini_client() -> genai.Client:
-    """Gemini APIクライアントを初期化"""
-    api_key = os.getenv('GEMINI_API_KEY')
-    if not api_key:
-        print("[ERROR] GEMINI_API_KEY が環境変数に設定されていません。")
-        sys.exit(1)
-
-    return genai.Client(api_key=api_key)
 
 
 def read_hearing_documents() -> Dict[str, str]:
@@ -958,13 +944,13 @@ Q: そこから得た「チェックポイント」は？
             }
         )
 
-        if _is_quota_error(Exception(str(response))):
+        if is_quota_error(Exception(str(response))):
             raise GeminiQuotaError("API quota exceeded")
 
         return response.text
 
     except Exception as e:
-        if _is_quota_error(e):
+        if is_quota_error(e):
             print(f"[WARNING] Gemini APIクォータ制限に達しました。リトライします...")
             raise GeminiQuotaError(str(e))
         print(f"[ERROR] ペルソナ生成中にエラーが発生しました: {e}")

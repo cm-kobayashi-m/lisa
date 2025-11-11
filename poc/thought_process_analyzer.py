@@ -11,17 +11,16 @@ from typing import Dict, Any, Optional, Tuple
 from google import genai
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-
-class GeminiQuotaError(Exception):
-    """Geminiのクォータ制限エラー"""
-    pass
-
-
-def _is_quota_error(exception: Exception) -> bool:
-    """例外がクォータエラーかどうかを判定"""
-    error_str = str(exception).lower()
-    quota_keywords = ['quota', 'rate limit', 'resource exhausted', 'too many requests', '429']
-    return any(keyword in error_str for keyword in quota_keywords)
+# 共通ユーティリティ
+from utils.gemini_utils import (
+    GeminiQuotaError,
+    is_quota_error,
+    extract_json_from_response
+)
+from utils.thought_utils import (
+    build_yaml_frontmatter,
+    enhance_markdown_with_metadata
+)
 
 
 @retry(
@@ -229,90 +228,12 @@ JSONのみを出力。具体的で詳細な内容を心がけてください。
                 )
             )
 
-        # レスポンステキストを取得
+        # レスポンステキストを取得してJSONを抽出
         response_text = response.text.strip()
+        thought_process = extract_json_from_response(response_text)
 
-        # コードブロックを除去
-        if response_text.startswith('```'):
-            # ```json や ``` で囲まれている場合
-            import re
-            code_block_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', response_text, re.DOTALL)
-            if code_block_match:
-                response_text = code_block_match.group(1).strip()
-
-        # JSONパース
-        try:
-            thought_process = json.loads(response_text)
-        except json.JSONDecodeError as e:
-            print(f"[WARN] JSONパースエラー: {e}")
-            print(f"[DEBUG] レスポンスの最初の500文字: {response_text[:500]}")
-
-            # 複数の修復方法を試す
-            import re
-
-            # 方法1: 最初の{から対応する}までを抽出
-            def extract_json_object(text):
-                start = text.find('{')
-                if start == -1:
-                    return None
-
-                bracket_count = 0
-                in_string = False
-                escape_next = False
-
-                for i in range(start, len(text)):
-                    char = text[i]
-
-                    if escape_next:
-                        escape_next = False
-                        continue
-
-                    if char == '\\':
-                        escape_next = True
-                        continue
-
-                    if char == '"' and not escape_next:
-                        in_string = not in_string
-                        continue
-
-                    if not in_string:
-                        if char == '{':
-                            bracket_count += 1
-                        elif char == '}':
-                            bracket_count -= 1
-                            if bracket_count == 0:
-                                return text[start:i+1]
-
-                # 不完全なJSONの場合、最後まで取得
-                return text[start:]
-
-            json_str = extract_json_object(response_text)
-
-            if json_str:
-                try:
-                    thought_process = json.loads(json_str)
-                except json.JSONDecodeError:
-                    # 方法2: 不完全なJSONを修復
-                    if not json_str.rstrip().endswith('}'):
-                        # 文字列が途中で切れている場合
-                        if '"' in json_str and json_str.count('"') % 2 == 1:
-                            json_str += '"'
-
-                        # 配列が閉じていない場合
-                        if '[' in json_str:
-                            bracket_diff = json_str.count('[') - json_str.count(']')
-                            json_str += ']' * bracket_diff
-
-                        # オブジェクトが閉じていない場合
-                        brace_diff = json_str.count('{') - json_str.count('}')
-                        json_str += '}' * brace_diff
-
-                    try:
-                        thought_process = json.loads(json_str)
-                    except:
-                        raise ValueError(f"JSONの修復に失敗しました。レスポンスの最初の部分: {response_text[:500]}")
-            else:
-                raise ValueError(f"有効なJSONが見つかりません。レスポンスの最初の部分: {response_text[:500]}")
+        if thought_process is None:
+            raise ValueError(f"JSONの抽出に失敗しました。レスポンスの最初の部分: {response_text[:500]}")
 
         # メタデータを追加
         thought_process['model'] = model_name
@@ -323,7 +244,7 @@ JSONのみを出力。具体的で詳細な内容を心がけてください。
         return thought_process
 
     except Exception as e:
-        if _is_quota_error(e):
+        if is_quota_error(e):
             raise GeminiQuotaError(str(e))
         else:
             print(f"[ERROR] 思考プロセス分析エラー: {e}")
@@ -351,82 +272,6 @@ JSONのみを出力。具体的で詳細な内容を心がけてください。
             }
 
 
-def _build_yaml_frontmatter(thought_process: Dict[str, Any], json_file_path: Optional[str] = None) -> str:
-    """
-    YAMLフロントマターを生成
-
-    Args:
-        thought_process: 思考プロセスの分析結果
-        json_file_path: 対応するJSONファイルパス
-
-    Returns:
-        YAMLフロントマター文字列
-    """
-    import json as json_lib
-
-    frontmatter = ["---"]
-
-    # 基本メタデータ
-    frontmatter.append(f"project_name: {json_lib.dumps(thought_process.get('project_name', 'unknown'))}")
-    frontmatter.append(f"generated_at: {json_lib.dumps(thought_process.get('generated_at', 'N/A'))}")
-    frontmatter.append(f"model: {json_lib.dumps(thought_process.get('model', 'N/A'))}")
-
-    # ノートファイルパス
-    if 'note_file' in thought_process:
-        frontmatter.append(f"note_file: {json_lib.dumps(thought_process['note_file'])}")
-
-    # JSONファイルパス
-    if json_file_path:
-        frontmatter.append(f"json_file: {json_lib.dumps(str(json_file_path))}")
-
-    # エラー情報（存在する場合）
-    if 'error' in thought_process:
-        frontmatter.append(f"has_error: true")
-
-    frontmatter.append("---")
-    frontmatter.append("")  # 空行
-
-    return '\n'.join(frontmatter)
-
-
-def _enhance_markdown_with_metadata(
-    markdown_content: str,
-    thought_process: Dict[str, Any],
-    json_file_path: Optional[str] = None
-) -> str:
-    """
-    Markdown本文にメタデータ（YAMLフロントマター、目次）を追加
-
-    Args:
-        markdown_content: format_thought_process_summary()の出力
-        thought_process: 思考プロセスの分析結果
-        json_file_path: 対応するJSONファイルパス
-
-    Returns:
-        メタデータ付きMarkdown文字列
-    """
-    # YAMLフロントマターを追加
-    frontmatter = _build_yaml_frontmatter(thought_process, json_file_path)
-
-    # 簡易的な目次を追加
-    toc_lines = [
-        "## 目次",
-        "",
-        "- [思考の流れと根拠](#思考の流れと根拠)",
-        "- [重要な意思決定](#重要な意思決定)",
-        "- [情報源の活用](#情報源の活用)",
-        "- [セクション構成](#セクション構成)",
-        "- [分析の深さ](#分析の深さ)",
-        "- [品質評価](#品質評価)",
-        "- [改善の余地](#改善の余地)",
-        ""
-    ]
-    toc = '\n'.join(toc_lines)
-
-    # 組み立て
-    enhanced = frontmatter + '\n' + toc + '\n' + markdown_content
-
-    return enhanced
 
 
 def save_thought_process(
@@ -484,13 +329,25 @@ def save_thought_process(
             # format_thought_process_summary()を使ってMarkdown本文を生成
             markdown_body = format_thought_process_summary(thought_process)
 
+            # ノート固有の目次セクション
+            toc_sections = [
+                "思考の流れと根拠",
+                "重要な意思決定",
+                "情報源の活用",
+                "セクション構成",
+                "分析の深さ",
+                "品質評価",
+                "改善の余地"
+            ]
+
             # メタデータを追加（YAMLフロントマター、目次）
             # プロジェクト名を基準とした相対パスを計算
             json_relative_path = f"{project_name}/analysis/{timestamped_file.name}"
-            enhanced_markdown = _enhance_markdown_with_metadata(
+            enhanced_markdown = enhance_markdown_with_metadata(
                 markdown_body,
                 thought_process,
-                json_file_path=json_relative_path
+                json_file_path=json_relative_path,
+                toc_sections=toc_sections
             )
 
             # タイムスタンプ付きMarkdownファイルに保存
