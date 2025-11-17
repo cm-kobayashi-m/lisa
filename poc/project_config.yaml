@@ -57,9 +57,9 @@ projects:
     google_drive:
       - "1cxP8tNPWHcXWFug0yZ7Iu5BgFID7hpW6"
 
-  LISAテスト1（CSA）:
-    google_drive:
-      - "1DG2XiwTn-v0SOZbzbi2YrU1KAxVPipph"
+#  LISAテスト1（CSA）:
+#    google_drive:
+#      - "1DG2XiwTn-v0SOZbzbi2YrU1KAxVPipph"
 
 #  ユニ・チャーム（CSA）:
 #    google_drive:

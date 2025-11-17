@@ -53,14 +53,14 @@ def analyze_thought_process(
         # 思考プロセス分析用のモデル（安価なモデルを使用可能）
         model_name = os.getenv('THOUGHT_ANALYSIS_MODEL', os.getenv('GEMINI_MODEL', 'gemini-2.5-pro '))
 
-    # コンテキストの要約（トークン削減のため）
+    # RAGコンテキストは思考プロセス分析に重要なので、より多くの情報を含める
     context_summary = ""
     if rag_context:
-        # RAGコンテキストが長い場合は要約
-        context_lines = rag_context.split('\n')[:20]  # 最初の20行のみ
-        context_summary = '\n'.join(context_lines)
-        if len(context_lines) < len(rag_context.split('\n')):
-            context_summary += "\n...(以下省略)"
+        # 最大80000文字まで含める（ノート生成時と同じ制限）
+        if len(rag_context) > 80000:
+            context_summary = rag_context[:80000] + "\n...(以下省略)"
+        else:
+            context_summary = rag_context
 
     # 分析プロンプトの構築
     analysis_prompt = f"""
@@ -70,14 +70,18 @@ def analyze_thought_process(
 ## 生成されたリフレクションノート
 {reflection_note}
 
-## 使用されたコンテキスト（要約）
+## 使用されたRAGコンテキスト
+以下は、ノート生成時に参照可能だったRAGドキュメントの情報です。
+これらの中から実際にどのドキュメントのどの部分を参考にしたかを特定してください。
+
 {context_summary if context_summary else "なし"}
 
 ## 質問事項
 以下の観点について、できる限り具体的かつ詳細に、JSONフォーマットで回答してください：
 
 1. **reasoning_process**: 思考の流れと根拠
-   - どのドキュメントのどの部分を参考にしたか
+   - どのドキュメント（RAG）を参考にしたか（ドキュメント名、セクション名など）
+   - そのドキュメントのどの部分が重要だったか（具体的な引用や要約）
    - そこから何を読み取ったか
    - どのような推論をしたか
 
@@ -86,10 +90,14 @@ def analyze_thought_process(
    - 選択した案とその決め手
    - 却下した案とその理由
 
-3. **information_sources**: 情報源の活用方法
-   - 参照した具体的な情報源
-   - その情報をどう解釈したか
-   - 情報の信頼性をどう評価したか
+3. **information_sources**: 情報源の活用方法 ⭐重要⭐
+   - 上記「使用されたRAGコンテキスト」セクションに記載されている各ドキュメントについて：
+     * ドキュメントの識別情報（タイトル、ファイル名など）を明確に記載
+     * どのセクション・どの部分を参照したか
+     * その部分の重要度（high/medium/low）と判断理由
+     * ノートのどこに反映したか
+   - 各情報源の信頼性評価
+   - **important_sections配列には、参照した全ての重要セクションを必ず含めてください**
 
 4. **section_composition**: セクション構成の詳細な理由
    - 各セクションを含めた具体的理由
@@ -135,6 +143,14 @@ def analyze_thought_process(
     "information_sources": [
         {{
             "source_type": "情報源の種類（RAG文書、スクリーンショット、etc）",
+            "document_identifier": "RAGドキュメントの場合は識別情報（ファイル名、タイトルなど）",
+            "important_sections": [
+                {{
+                    "section_reference": "セクション名、ページ番号、または位置情報",
+                    "content_summary": "重要だった部分の要約または引用",
+                    "importance_level": "high/medium/low"
+                }}
+            ],
             "specific_content": "参照した具体的な内容",
             "interpretation": "その情報をどう解釈したか",
             "reliability_assessment": "信頼性の評価とその根拠",
@@ -444,8 +460,18 @@ def format_thought_process_summary(thought_process: Dict[str, Any]) -> str:
     if 'information_sources' in thought_process:
         lines.append("## 情報源の活用")
         for source in thought_process['information_sources']:
-            lines.append(f"\n### {source.get('source_type', 'N/A')}")
-            lines.append(f"**具体的な内容**: {source.get('specific_content', 'N/A')}")
+            source_title = source.get('document_identifier') or source.get('source_type', 'N/A')
+            lines.append(f"\n### {source_title}")
+            lines.append(f"**種類**: {source.get('source_type', 'N/A')}")
+
+            # 重要なセクションの詳細表示
+            if 'important_sections' in source and source['important_sections']:
+                lines.append("\n**重要なセクション:**")
+                for section in source.get('important_sections', []):
+                    lines.append(f"\n- **{section.get('section_reference', 'N/A')}** (重要度: {section.get('importance_level', 'N/A')})")
+                    lines.append(f"  - 内容: {section.get('content_summary', 'N/A')}")
+
+            lines.append(f"\n**具体的な内容**: {source.get('specific_content', 'N/A')}")
             lines.append(f"**解釈**: {source.get('interpretation', 'N/A')}")
             lines.append(f"**信頼性評価**: {source.get('reliability_assessment', 'N/A')}")
             lines.append(f"**ノートへの反映**: {source.get('usage_in_note', 'N/A')}")

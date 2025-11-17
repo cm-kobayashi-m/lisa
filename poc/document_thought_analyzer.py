@@ -69,12 +69,14 @@ def analyze_document_generation_process(
     source_summary = source_document[:3000] if len(source_document) > 3000 else source_document
     generated_summary = generated_document[:3000] if len(generated_document) > 3000 else generated_document
 
+    # RAG結果は思考プロセス分析に重要なので、より多くの情報を含める
     rag_summary = ""
     if rag_results:
-        rag_lines = rag_results.split('\n')[:30]
-        rag_summary = '\n'.join(rag_lines)
-        if len(rag_lines) < len(rag_results.split('\n')):
-            rag_summary += "\n...(以下省略)"
+        # 最大80000文字まで含める（ノート生成時と同じ制限）
+        if len(rag_results) > 80000:
+            rag_summary = rag_results[:80000] + "\n...(以下省略)"
+        else:
+            rag_summary = rag_results
 
     # 分析プロンプトの構築
     analysis_prompt = f"""
@@ -90,7 +92,10 @@ def analyze_document_generation_process(
 ## 生成されたドキュメント（要約）
 {generated_summary}
 
-## RAG検索結果（要約）
+## RAG検索結果
+以下は、ドキュメント生成時に参照可能だった類似案件やドキュメントの情報です。
+これらの中から実際にどのドキュメントのどの部分を参考にしたかを特定してください。
+
 {rag_summary if rag_summary else "なし"}
 
 ## プロジェクトコンテキスト
@@ -113,10 +118,15 @@ def analyze_document_generation_process(
    - カスタマイズした部分とその理由
    - 標準形式から逸脱した部分
 
-3. **rag_utilization**: RAG検索結果の活用
-   - どの類似案件を参考にしたか
-   - 具体的にどの部分を採用/不採用としたか
-   - 類似案件から学んだパターン
+3. **rag_utilization**: RAG検索結果の活用 ⭐重要⭐
+   - 上記「RAG検索結果」セクションに記載されている各ドキュメントについて：
+     * ドキュメントの識別情報（タイトル、ファイル名など）を明確に記載
+     * そのドキュメントのどのセクション・どの部分を参照したか
+     * その部分がなぜ重要だったか（重要度: high/medium/low）
+     * 生成ドキュメントのどこに反映したか
+   - 各ドキュメントの採用/不採用の判断理由
+   - RAGドキュメントから学んだパターン
+   - **referenced_documents配列には、参照した全てのドキュメントを必ず含めてください**
 
 4. **document_specific_decisions**: ドキュメント固有の判断
    - ヒアリングシートの場合：質問の選定と順序、深掘りすべき領域の判断
@@ -161,6 +171,22 @@ def analyze_document_generation_process(
         ]
     }},
     "rag_utilization": {{
+        "referenced_documents": [
+            {{
+                "document_identifier": "参照したドキュメントの識別情報（ファイル名、タイトルなど）",
+                "document_type": "ドキュメントの種類（提案書、ヒアリングシート、議事録など）",
+                "important_sections": [
+                    {{
+                        "section_reference": "セクション名またはページ番号",
+                        "content_summary": "重要だった部分の要約または引用",
+                        "importance_level": "high/medium/low",
+                        "usage_in_generation": "生成ドキュメントのどこにどう反映したか"
+                    }}
+                ],
+                "overall_relevance": "このドキュメント全体の関連性と重要度",
+                "adoption_decision": "採用した要素と不採用とした要素、その理由"
+            }}
+        ],
         "relevant_cases": [
             {{
                 "case_identifier": "類似案件の識別情報",
@@ -169,8 +195,8 @@ def analyze_document_generation_process(
                 "rejected_elements": ["不採用とした要素とその理由"]
             }}
         ],
-        "patterns_learned": ["類似案件から学んだパターン"],
-        "adaptation_strategy": "類似案件の知見をどう現在の案件に適応したか"
+        "patterns_learned": ["RAGドキュメントから学んだパターン"],
+        "adaptation_strategy": "RAGの知見をどう現在の案件に適応したか"
     }},
     "document_specific_decisions": {{
         "hearing_sheet": {{
@@ -481,18 +507,42 @@ def format_document_thought_process_summary(thought_process: Dict[str, Any]) -> 
         lines.append("## RAG検索結果の活用")
         ru = thought_process['rag_utilization']
 
-        for case in ru.get('relevant_cases', []):
-            lines.append(f"\n### {case.get('case_identifier', 'N/A')}")
-            lines.append("**類似点:**")
-            for point in case.get('similarity_points', []):
-                lines.append(f"- {point}")
-            lines.append("**採用要素:**")
-            for elem in case.get('adopted_elements', []):
-                lines.append(f"- {elem}")
+        # 参照ドキュメントの詳細
+        if 'referenced_documents' in ru and ru['referenced_documents']:
+            lines.append("\n### 参照したドキュメント")
+            for doc in ru.get('referenced_documents', []):
+                lines.append(f"\n#### {doc.get('document_identifier', 'N/A')}")
+                lines.append(f"- **種類**: {doc.get('document_type', 'N/A')}")
+                lines.append(f"- **全体的な関連性**: {doc.get('overall_relevance', 'N/A')}")
 
-        lines.append("\n**学習したパターン:**")
+                lines.append("\n**重要なセクション:**")
+                for section in doc.get('important_sections', []):
+                    lines.append(f"\n- **{section.get('section_reference', 'N/A')}** (重要度: {section.get('importance_level', 'N/A')})")
+                    lines.append(f"  - 内容: {section.get('content_summary', 'N/A')}")
+                    lines.append(f"  - 反映箇所: {section.get('usage_in_generation', 'N/A')}")
+
+                lines.append(f"\n**採用判断**: {doc.get('adoption_decision', 'N/A')}")
+
+        # 類似案件
+        if ru.get('relevant_cases'):
+            lines.append("\n### 類似案件")
+            for case in ru.get('relevant_cases', []):
+                lines.append(f"\n**{case.get('case_identifier', 'N/A')}**")
+                lines.append("類似点:")
+                for point in case.get('similarity_points', []):
+                    lines.append(f"- {point}")
+                lines.append("採用要素:")
+                for elem in case.get('adopted_elements', []):
+                    lines.append(f"- {elem}")
+
+        lines.append("\n### 学習したパターン")
         for pattern in ru.get('patterns_learned', []):
             lines.append(f"- {pattern}")
+
+        if ru.get('adaptation_strategy'):
+            lines.append(f"\n### 適応戦略")
+            lines.append(ru.get('adaptation_strategy', 'N/A'))
+
         lines.append("")
 
     # ドキュメント固有の判断
