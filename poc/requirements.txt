@@ -15,3 +15,5 @@ tqdm  # 進捗表示用
 unstructured[pdf,md,docx,xlsx,pptx]
 langchain-text-splitters  # テキスト分割用
 func-timeout  # タイムアウト処理用
+
+boto3
