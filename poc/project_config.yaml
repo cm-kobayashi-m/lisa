@@ -53,9 +53,13 @@ projects:
 #      - "1Dg7Ra5osBM5gvaCvKUudaXf4uiZUVQug"
 #      - "1kL3FqFUvJbldTCkHmv9PkQFfQ7eZ0bNU"
 
-  LISAテスト1:
+  インフォマート:
     google_drive:
-      - "1cxP8tNPWHcXWFug0yZ7Iu5BgFID7hpW6"
+      - "19kkqeW9TFeA0WkRlmKOQxRW590uPd0Sy"
+
+#  LISAテスト1:
+#    google_drive:
+#      - "1cxP8tNPWHcXWFug0yZ7Iu5BgFID7hpW6"
 
 #  LISAテスト1（CSA）:
 #    google_drive:
